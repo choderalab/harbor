@@ -32,6 +32,6 @@ def test_dataset_to_active_inactive(molecule_data):
     active_inactive = dataset.to_active_inactive(11.22)
     assert active_inactive.experimental_values == [1, 1, 1, 0, 0]
     assert active_inactive.experiment_type == ExperimentType.is_active
-    assert isinstance(active_inactive) == ActiveInactiveDataset
+    assert isinstance(active_inactive, ActiveInactiveDataset)
     assert active_inactive.predicted_values == molecule_data["glide_docking"].tolist()
     assert active_inactive.prediction_type == dataset.prediction_type
