@@ -103,7 +103,7 @@ class Dataset(BaseModel):
             predictions=self.predictions,
             experiments=experiments,
             prediction_type=self.prediction_type,
-            experiment_type=self.experiment_type,
+            experiment_type=ExperimentType.is_active,
         )
 
     @model_validator(mode="after")
