@@ -35,6 +35,7 @@ class ExperimentType(Enum):
     ec50 = "ec50"
     relative_activity = "relative_activity"
     relative_inhibition = "relative_inhibition"
+    is_active = "is_active"
 
 
 class PredictionType(Enum):
@@ -88,6 +89,23 @@ class Dataset(BaseModel):
     def molecule_ids(self):
         return [p.molecule.id for p in self.predictions]
 
+    def to_active_inactive(self, threshold: float) -> "Dataset":
+        experiments = [
+            Experiment(
+                molecule=e.molecule,
+                type=ExperimentType.is_active,
+                value=1 if e.value >= threshold else 0,
+            )
+            for e in self.experiments
+        ]
+        return Dataset(
+            molecules=self.molecules,
+            predictions=self.predictions,
+            experiments=experiments,
+            prediction_type=self.prediction_type,
+            experiment_type=self.experiment_type,
+        )
+
     @model_validator(mode="after")
     def check_consistency(self):
         if not all(p.type == self.prediction_type for p in self.predictions):
@@ -107,6 +125,27 @@ class Dataset(BaseModel):
         smiles_column: str = None,
     ) -> "Dataset":
         df = pd.read_csv(filename)
+        return cls.from_dataframe(
+            df,
+            id_column,
+            experimental_data_column,
+            prediction_column,
+            prediction_type,
+            experiment_type,
+            smiles_column,
+        )
+
+    @classmethod
+    def from_dataframe(
+        cls,
+        df: pd.DataFrame,
+        id_column: str,
+        experimental_data_column: str,
+        prediction_column: str,
+        prediction_type: PredictionType = PredictionType.docking,
+        experiment_type: ExperimentType = ExperimentType.pic50,
+        smiles_column: str = None,
+    ) -> "Dataset":
         molecules = []
         predictions = []
         experiments = []
