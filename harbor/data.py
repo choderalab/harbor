@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 from enum import Enum
 import pandas as pd
 
@@ -89,7 +89,7 @@ class Dataset(BaseModel):
     def molecule_ids(self):
         return [p.molecule.id for p in self.predictions]
 
-    def to_active_inactive(self, threshold: float) -> "Dataset":
+    def to_active_inactive(self, threshold: float) -> "ActiveInactiveDataset":
         experiments = [
             Experiment(
                 molecule=e.molecule,
@@ -98,7 +98,7 @@ class Dataset(BaseModel):
             )
             for e in self.experiments
         ]
-        return Dataset(
+        return ActiveInactiveDataset(
             molecules=self.molecules,
             predictions=self.predictions,
             experiments=experiments,
@@ -184,3 +184,15 @@ class Dataset(BaseModel):
             prediction_type=prediction_type,
             experiment_type=experiment_type,
         )
+
+
+class ActiveInactiveDataset(Dataset):
+    """
+    ActiveInactiveDataset
+    """
+
+    @field_validator("experiment_type")
+    def check_experiment_type(cls, v):
+        if v != ExperimentType.is_active:
+            raise ValueError(f"Experiment type must be {ExperimentType.is_active}")
+        return v
