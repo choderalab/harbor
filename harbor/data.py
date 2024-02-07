@@ -87,14 +87,6 @@ class Dataset(BaseModel):
     def molecule_ids(self):
         return [p.molecule.id for p in self.predictions]
 
-    @field_validator("experiments")
-    def check_experiments(cls, v):
-        if len(v) != len(cls.molecules):
-            raise ValueError("Number of experiments does not match number of molecules")
-        if not all(e.type == cls.experiment_type for e in cls.experiments):
-            raise ValueError("Experiment type does not match")
-        return v
-
     @classmethod
     def from_csv(
         cls,
