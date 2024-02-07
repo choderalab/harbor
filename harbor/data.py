@@ -112,6 +112,13 @@ class Dataset(BaseModel):
             raise ValueError("Inconsistent prediction types")
         if not all(e.type == self.experiment_type for e in self.experiments):
             raise ValueError("Inconsistent experiment types")
+        if not len(self.molecules) == len(self.predictions) == len(self.experiments):
+            raise ValueError(
+                f"Inconsistent number of "
+                f"molecules({len(self.molecules)}), "
+                f"predictions({len(self.predictions)}), and "
+                f"experiments({len(self.experiments)})"
+            )
 
     @classmethod
     def from_csv(
