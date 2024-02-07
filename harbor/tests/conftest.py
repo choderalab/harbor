@@ -31,3 +31,17 @@ def molecule_csv(tmpdir_factory, molecule_data):
     file = tmpdir_factory.mktemp("data").join("molecule.csv")
     molecule_data.to_csv(file, index=False)
     return file
+
+
+@pytest.fixture(scope="session")
+def dataset(molecule_data):
+    from harbor.data import Dataset
+
+    return Dataset.from_dataframe(
+        molecule_data, "molecule_chembl_id", "pIC50", "glide_docking"
+    )
+
+
+@pytest.fixture(scope="session")
+def active_inactive_dataset(dataset):
+    return dataset.to_active_inactive(11.22)
