@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 import pandas as pd
 
@@ -62,6 +62,7 @@ class Experiment(BaseModel):
 
     molecule: Molecule = Field(..., description="Molecule")
     type: ExperimentType = Field(..., description="Experiment type")
+    value: float = Field(..., description="Experimental value")
 
 
 class Dataset(BaseModel):
@@ -81,11 +82,18 @@ class Dataset(BaseModel):
 
     @property
     def experimental_values(self):
-        return [self.experiment] * len(self.experiments)
+        return [e.value for e in self.experiments]
 
     @property
     def molecule_ids(self):
         return [p.molecule.id for p in self.predictions]
+
+    @model_validator(mode="after")
+    def check_consistency(self):
+        if not all(p.type == self.prediction_type for p in self.predictions):
+            raise ValueError("Inconsistent prediction types")
+        if not all(e.type == self.experiment_type for e in self.experiments):
+            raise ValueError("Inconsistent experiment types")
 
     @classmethod
     def from_csv(
@@ -123,7 +131,13 @@ class Dataset(BaseModel):
                     value=row[1][prediction_column],
                 )
             )
-            experiments.append(Experiment(molecule=molecule, type=experiment_type))
+            experiments.append(
+                Experiment(
+                    molecule=molecule,
+                    type=experiment_type,
+                    value=row[1][experimental_data_column],
+                )
+            )
         return cls(
             molecules=molecules,
             predictions=predictions,
