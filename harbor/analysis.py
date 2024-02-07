@@ -5,6 +5,19 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 
+def get_ci_from_bootstraps(
+    values: list[float], alpha: float = 0.95
+) -> tuple[float, float]:
+    """
+    Calculate the confidence interval of a list of values
+    """
+    sorted_values = np.sort(values)
+    n_values = len(sorted_values)
+    lower_index = sorted_values[int(n_values * (1 - alpha))]
+    upper_index = sorted_values[int(n_values * alpha)]
+    return (lower_index, upper_index)
+
+
 def get_roc_curve(dataset: ActiveInactiveDataset, model_id: str) -> RocCurve:
     fpr, tpr, thresholds = roc_curve(
         dataset.experimental_values, dataset.predicted_values
@@ -31,37 +44,18 @@ def get_roc_curve_with_uncertainty(
             len(dataset.experimental_values),
             replace=True,
         )
-
-        fpr, tpr, _ = roc_curve(
-            dataset.experimental_values[indices], dataset.predicted_values[indices]
+        if len(np.unique(dataset.experimental_values[indices])) < 2:
+            continue
+        aucs.append(
+            roc_auc_score(
+                dataset.experimental_values[indices], dataset.predicted_values[indices]
+            )
         )
-        aucs.append(auc(fpr, tpr))
     return RocCurveUncertainty(
         id=model_id,
         fpr=fpr.tolist(),
         tpr=tpr.tolist(),
         thresholds=thresholds.tolist(),
-        auc=roc_auc_score(dataset.experimental_values, dataset.predicted_values),
-        auc_uncertainty=np.std(aucs),
+        auc=np.mean(aucs),
+        auc_ci=get_ci_from_bootstraps(aucs),
     )
-
-
-class ModelEvaluator(BaseModel):
-    """
-    ModelEvaluator
-    """
-
-    dataset: ActiveInactiveDataset = Field(..., description="Dataset to evaluate")
-
-    def get_precision_recall_curve(
-        self, model_id: str, model_predictions: list[float]
-    ) -> dict:
-        precision, recall, _ = precision_recall_curve(
-            self.dataset.experimental_values, model_predictions
-        )
-        return {
-            "id": model_id,
-            "precision": precision.tolist(),
-            "recall": recall.tolist(),
-            "auc": auc(recall, precision),
-        }

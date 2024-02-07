@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+import numpy as np
 
 
 class RocCurve(BaseModel):
@@ -23,7 +24,15 @@ class RocCurveUncertainty(BaseModel):
     tpr: list[float] = Field(..., description="True positive rate (y-axis)")
     thresholds: list[float] = Field(..., description="Thresholds")
     auc: float = 0.0
-    auc_uncertainty: float = 0.0
+    auc_ci: tuple[float, float] = (0.0, 0.0)
+
+    @property
+    def auc_ci_lower(self) -> float:
+        return self.auc_ci[0]
+
+    @property
+    def auc_ci_upper(self) -> float:
+        return self.auc_ci[1]
 
 
 class PrecisionRecallCurve(BaseModel):

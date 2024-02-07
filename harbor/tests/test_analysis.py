@@ -18,4 +18,4 @@ def test_roc_curve_with_uncertainty(active_inactive_dataset):
     assert np.isclose(roc_curve.auc, 0.083, atol=0.01)
     assert roc_curve.id == "test"
     assert roc_curve.thresholds == [np.inf, 12, 11, 9]
-    assert np.isclose(roc_curve.auc_uncertainty, 0.0, atol=0.01)
+    assert np.allclose(roc_curve.auc_ci, [0.0, 0.33], atol=0.01)

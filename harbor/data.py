@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, model_validator, field_validator
 from enum import Enum
-import pandas as pd
+import pandas as pd, numpy as np
 
 
 class Molecule(BaseModel):
@@ -78,16 +78,16 @@ class Dataset(BaseModel):
     experiment_type: ExperimentType = Field(..., description="Experiment type")
 
     @property
-    def predicted_values(self):
-        return [p.value for p in self.predictions]
+    def predicted_values(self) -> np.ndarray:
+        return np.array([p.value for p in self.predictions])
 
     @property
-    def experimental_values(self):
-        return [e.value for e in self.experiments]
+    def experimental_values(self) -> np.ndarray:
+        return np.array([e.value for e in self.experiments])
 
     @property
-    def molecule_ids(self):
-        return [p.molecule.id for p in self.predictions]
+    def molecule_ids(self) -> np.ndarray:
+        return np.array([p.molecule.id for p in self.predictions])
 
     def to_active_inactive(self, threshold: float) -> "ActiveInactiveDataset":
         experiments = [
