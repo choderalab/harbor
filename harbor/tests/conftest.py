@@ -38,7 +38,11 @@ def dataset(molecule_data):
     from harbor.data import Dataset
 
     return Dataset.from_dataframe(
-        molecule_data, "molecule_chembl_id", "pIC50", "glide_docking"
+        molecule_data,
+        "molecule_chembl_id",
+        "pIC50",
+        "glide_docking",
+        smiles_column="smiles",
     )
 
 
