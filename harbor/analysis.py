@@ -52,7 +52,7 @@ def get_roc_curve_with_uncertainty(
                 dataset.experimental_values[indices], dataset.predicted_values[indices]
             )
         )
-    return RocCurveUncertainty(
+    return_curve = RocCurveUncertainty(
         id=model_id,
         fpr=fpr.tolist(),
         tpr=tpr.tolist(),
@@ -61,3 +61,6 @@ def get_roc_curve_with_uncertainty(
         auc_ci=get_ci_from_bootstraps(aucs),
         dataset=dataset,
     )
+    # This is hacky, without this `dataset` will return None
+    return_curve.dataset = dataset
+    return return_curve
