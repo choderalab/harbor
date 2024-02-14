@@ -28,6 +28,7 @@ def get_roc_curve(dataset: ActiveInactiveDataset, model_id: str) -> RocCurve:
         tpr=tpr.tolist(),
         thresholds=thresholds.tolist(),
         auc=roc_auc_score(dataset.experimental_values, dataset.predicted_values),
+        dataset=dataset,
     )
 
 
@@ -58,4 +59,5 @@ def get_roc_curve_with_uncertainty(
         thresholds=thresholds.tolist(),
         auc=np.mean(aucs),
         auc_ci=get_ci_from_bootstraps(aucs),
+        dataset=dataset,
     )
