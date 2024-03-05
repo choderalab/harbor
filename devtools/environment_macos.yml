@@ -11,8 +11,10 @@ dependencies:
   - scikit-learn
   - pydantic
   - ca-certificates
+  - openeye-toolkits
   - openssl
   - pytest
   - pandas
   - black
+  - rdkit
 prefix: /Users/alexpayne/miniforge-pypy3/envs/harbor
