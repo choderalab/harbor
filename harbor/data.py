@@ -38,12 +38,21 @@ class ExperimentType(Enum):
     is_active = "is_active"
 
 
-class PredictionType(Enum):
+class PredictionType(BaseModel):
     """
     PredictionType
     """
 
-    docking = "docking"
+    name: str = Field(..., description="Name")
+    description: str = Field(..., description="Description")
+    higher_is_better: bool = Field(
+        ..., description="Whether or not higher values of this score are better"
+    )
+
+
+DockingScore = PredictionType(
+    name="docking_score", description="Docking score", higher_is_better=False
+)
 
 
 class Prediction(BaseModel):
@@ -80,6 +89,12 @@ class Dataset(BaseModel):
     @property
     def predicted_values(self) -> np.ndarray:
         return np.array([p.value for p in self.predictions])
+
+    def get_higher_is_better_values(self) -> np.ndarray:
+        if self.prediction_type.higher_is_better:
+            return self.predicted_values
+        else:
+            return np.array([-p.value for p in self.predictions])
 
     @property
     def experimental_values(self) -> np.ndarray:
@@ -127,7 +142,7 @@ class Dataset(BaseModel):
         id_column: str,
         experimental_data_column: str,
         prediction_column: str,
-        prediction_type: PredictionType = PredictionType.docking,
+        prediction_type: PredictionType = DockingScore,
         experiment_type: ExperimentType = ExperimentType.pic50,
         smiles_column: str = None,
     ) -> "Dataset":
@@ -149,7 +164,7 @@ class Dataset(BaseModel):
         id_column: str,
         experimental_data_column: str,
         prediction_column: str,
-        prediction_type: PredictionType = PredictionType.docking,
+        prediction_type: PredictionType = DockingScore,
         experiment_type: ExperimentType = ExperimentType.pic50,
         smiles_column: str = None,
     ) -> "Dataset":

@@ -20,15 +20,16 @@ def get_ci_from_bootstraps(
 
 def get_roc_curve(dataset: ActiveInactiveDataset, model_id: str) -> RocCurve:
     fpr, tpr, thresholds = roc_curve(
-        dataset.experimental_values, dataset.predicted_values
+        dataset.experimental_values, dataset.get_higher_is_better_values()
     )
     return RocCurve(
-        id=model_id,
+        model_id=model_id,
         fpr=fpr.tolist(),
         tpr=tpr.tolist(),
         thresholds=thresholds.tolist(),
-        auc=roc_auc_score(dataset.experimental_values, dataset.predicted_values),
-        dataset=dataset,
+        auc=roc_auc_score(
+            dataset.experimental_values, dataset.get_higher_is_better_values()
+        ),
     )
 
 
@@ -36,7 +37,7 @@ def get_roc_curve_with_uncertainty(
     dataset: ActiveInactiveDataset, model_id: str, n_bootstraps: int = 1000
 ) -> RocCurveUncertainty:
     fpr, tpr, thresholds = roc_curve(
-        dataset.experimental_values, dataset.predicted_values
+        dataset.experimental_values, dataset.get_higher_is_better_values()
     )
     aucs = []
     for _ in range(n_bootstraps):
@@ -49,18 +50,15 @@ def get_roc_curve_with_uncertainty(
             continue
         aucs.append(
             roc_auc_score(
-                dataset.experimental_values[indices], dataset.predicted_values[indices]
+                dataset.experimental_values[indices],
+                dataset.get_higher_is_better_values()[indices],
             )
         )
-    return_curve = RocCurveUncertainty(
-        id=model_id,
+    return RocCurveUncertainty(
+        model_id=model_id,
         fpr=fpr.tolist(),
         tpr=tpr.tolist(),
         thresholds=thresholds.tolist(),
         auc=np.mean(aucs),
         auc_ci=get_ci_from_bootstraps(aucs),
-        dataset=dataset,
     )
-    # This is hacky, without this `dataset` will return None
-    return_curve.dataset = dataset
-    return return_curve
