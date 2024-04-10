@@ -29,6 +29,10 @@ class RocCurve(BaseModel):
     thresholds: list[float] = Field(..., description="Thresholds")
     auc: float = 0.0
 
+    @property
+    def auc_str(self) -> str:
+        return f"{self.auc:.2f}"
+
 
 class RocCurveUncertainty(BaseModel):
     """
@@ -51,6 +55,12 @@ class RocCurveUncertainty(BaseModel):
     @property
     def auc_ci_upper(self) -> float:
         return self.auc_ci[1]
+
+    @property
+    def auc_str(self) -> str:
+        return (
+            f"{self.auc:.2f} [95%: {self.auc_ci_lower: .2f}, {self.auc_ci_upper:.2f}]"
+        )
 
 
 class PrecisionRecallCurve(BaseModel):
