@@ -2,12 +2,28 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 
+class CurveBase(BaseModel):
+    """
+    Base class for a curve
+    """
+
+    id: str = Field(..., description="The name of the model assessed in this curve")
+
+    def to_df(self):
+        """
+        Convert the curve to a pandas DataFrame
+        """
+        raise NotImplementedError
+
+
 class RocCurve(BaseModel):
     """
     ROC curve
     """
 
-    id: str = Field(..., description="The name of the model assessed in this curve")
+    model_id: str = Field(
+        ..., description="The name of the model assessed in this curve"
+    )
     fpr: list[float] = Field(..., description="False positive rate (x-axis)")
     tpr: list[float] = Field(..., description="True positive rate (y-axis)")
     thresholds: list[float] = Field(..., description="Thresholds")
@@ -19,7 +35,9 @@ class RocCurveUncertainty(BaseModel):
     ROC curve with uncertainty
     """
 
-    id: str = Field(..., description="The name of the model assessed in this curve")
+    model_id: str = Field(
+        ..., description="The name of the model assessed in this curve"
+    )
     fpr: list[float] = Field(..., description="False positive rate (x-axis)")
     tpr: list[float] = Field(..., description="True positive rate (y-axis)")
     thresholds: list[float] = Field(..., description="Thresholds")
@@ -40,7 +58,6 @@ class PrecisionRecallCurve(BaseModel):
     Precision recall curve
     """
 
-    id: str = Field(..., description="The name of the model assessed in this curve")
     precision: list[float] = Field(..., description="Precision (x-axis)")
     recall: list[float] = Field(..., description="Recall (y-axis)")
     auc: float = 0.0
