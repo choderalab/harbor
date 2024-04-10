@@ -218,3 +218,11 @@ class ActiveInactiveDataset(Dataset):
         if v != ExperimentType.is_active:
             raise ValueError(f"Experiment type must be {ExperimentType.is_active}")
         return v
+
+    @property
+    def n_actives(self) -> int:
+        return int(np.sum(self.experimental_values))
+
+    @property
+    def n_inactives(self) -> int:
+        return int(len(self.experimental_values) - self.n_actives)
