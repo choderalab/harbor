@@ -21,6 +21,9 @@ class RocCurve(BaseModel):
     ROC curve
     """
 
+    model_id: str = Field(
+        ..., description="The name of the model assessed in this curve"
+    )
     fpr: list[float] = Field(..., description="False positive rate (x-axis)")
     tpr: list[float] = Field(..., description="True positive rate (y-axis)")
     thresholds: list[float] = Field(..., description="Thresholds")
@@ -32,6 +35,9 @@ class RocCurveUncertainty(BaseModel):
     ROC curve with uncertainty
     """
 
+    model_id: str = Field(
+        ..., description="The name of the model assessed in this curve"
+    )
     fpr: list[float] = Field(..., description="False positive rate (x-axis)")
     tpr: list[float] = Field(..., description="True positive rate (y-axis)")
     thresholds: list[float] = Field(..., description="Thresholds")
