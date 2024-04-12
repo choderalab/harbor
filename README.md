@@ -1,5 +1,10 @@
-# harbor
-A port for docking evaluation and assessment
+harbor
+======
+A home for docking evaluation and assessment
+[![GitHub Actions Build Status](https://github.com/choderalab/harbor/workflows/harbor-ci.yaml/badge.svg)](https://github.com/choderalab/harbor/actions?query=workflow%3ACI+branch%3Amain)
+[![codecov](https://codecov.io/gh/choderalab/harbor/branch/main/graph/badge.svg)](https://codecov.io/gh/choderalab/harbor/branch/main)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/choderalab/harbor/main.svg)](https://results.pre-commit.ci/latest/github/choderalab/harbor/main)
+[![Documentation Status](https://readthedocs.org/projects/harbor/badge/?version=latest)](https://harbor.readthedocs.io/en/latest/?badge=latest)
 
 # What should harbor help me do?
 * Simplify the conversion of docking results and experimental data into an easily comparable format

@@ -76,7 +76,7 @@ jobs:
                        --cov=harbor \
                        harbor/tests
     - name: Upload Code Coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4.0.1
       # Don't upload coverage scheduled or on fork
       if: ${{ github.repository == 'choderalab/harbor'
               && github.event != 'schedule' }}
