@@ -1,4 +1,4 @@
-from harbor.data import ActiveInactiveDataset
+from harbor.schema.data import ActiveInactiveDataset
 from harbor.plot_schema import RocCurve, PrecisionRecallCurve, RocCurveUncertainty
 from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve, auc
 from pydantic import BaseModel, Field

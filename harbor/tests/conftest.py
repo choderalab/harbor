@@ -21,7 +21,7 @@ def molecule_data():
                 "CNc1cc2c(Nc3cccc(Br)c3)ncnc2cn1",
             ],
             "pIC50": [11.522879, 11.221849, 11.221849, 11.096910, 11.096910],
-            "glide_docking": [10, 11, 9, 11, 12],
+            "glide_docking": [-10, -11, -9, -11, -12],
         }
     )
 
@@ -35,13 +35,16 @@ def molecule_csv(tmpdir_factory, molecule_data):
 
 @pytest.fixture(scope="session")
 def dataset(molecule_data):
-    from harbor.data import Dataset
+    from harbor.schema.data import Dataset
+    from harbor.schema.measurement_types import pIC50, DockingScore
 
     return Dataset.from_dataframe(
         molecule_data,
         "molecule_chembl_id",
         "pIC50",
         "glide_docking",
+        prediction_type=DockingScore,
+        experiment_type=pIC50,
         smiles_column="smiles",
     )
 

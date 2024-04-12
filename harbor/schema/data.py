@@ -1,6 +1,12 @@
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 import pandas as pd, numpy as np
+
+from harbor.schema.measurement_types import (
+    ExperimentalMeasurementType,
+    PredictedMeasurementType,
+    IsActive,
+)
 
 
 class Molecule(BaseModel):
@@ -23,45 +29,13 @@ class MoleculePropertyType(Enum):
     melting_point = "melting_point"
 
 
-class ExperimentType(Enum):
-    """
-    ExperimentType
-    """
-
-    pic50 = "pic50"
-    ic50 = "ic50"
-    ki = "ki"
-    kd = "kd"
-    ec50 = "ec50"
-    relative_activity = "relative_activity"
-    relative_inhibition = "relative_inhibition"
-    is_active = "is_active"
-
-
-class PredictionType(BaseModel):
-    """
-    PredictionType
-    """
-
-    name: str = Field(..., description="Name")
-    description: str = Field(..., description="Description")
-    higher_is_better: bool = Field(
-        ..., description="Whether or not higher values of this score are better"
-    )
-
-
-DockingScore = PredictionType(
-    name="docking_score", description="Docking score", higher_is_better=False
-)
-
-
 class Prediction(BaseModel):
     """
     Prediction
     """
 
     molecule: Molecule = Field(..., description="Molecule")
-    type: PredictionType = Field(..., description="Prediction type")
+    type: PredictedMeasurementType = Field(..., description="Prediction type")
     value: float = Field(..., description="Prediction")
 
 
@@ -71,8 +45,22 @@ class Experiment(BaseModel):
     """
 
     molecule: Molecule = Field(..., description="Molecule")
-    type: ExperimentType = Field(..., description="Experiment type")
+    type: ExperimentalMeasurementType = Field(..., description="Experiment type")
     value: float = Field(..., description="Experimental value")
+
+    def to_active_inactive(self, threshold: float) -> "Experiment":
+        if self.type.higher_is_better:
+            return Experiment(
+                molecule=self.molecule,
+                type=IsActive,
+                value=1 if self.value >= threshold else 0,
+            )
+        else:
+            return Experiment(
+                molecule=self.molecule,
+                type=IsActive,
+                value=1 if self.value <= threshold else 0,
+            )
 
 
 class Dataset(BaseModel):
@@ -83,8 +71,12 @@ class Dataset(BaseModel):
     molecules: list[Molecule] = Field(..., description="Molecules")
     predictions: list[Prediction] = Field(..., description="Predictions")
     experiments: list[Experiment] = Field(..., description="Experiment")
-    prediction_type: PredictionType = Field(..., description="Prediction type")
-    experiment_type: ExperimentType = Field(..., description="Experiment type")
+    prediction_type: PredictedMeasurementType = Field(
+        ..., description="Prediction type"
+    )
+    experiment_type: ExperimentalMeasurementType = Field(
+        ..., description="Experiment type"
+    )
 
     @property
     def predicted_values(self) -> np.ndarray:
@@ -105,20 +97,13 @@ class Dataset(BaseModel):
         return np.array([p.molecule.id for p in self.predictions])
 
     def to_active_inactive(self, threshold: float) -> "ActiveInactiveDataset":
-        experiments = [
-            Experiment(
-                molecule=e.molecule,
-                type=ExperimentType.is_active,
-                value=1 if e.value >= threshold else 0,
-            )
-            for e in self.experiments
-        ]
+        experiments = [e.to_active_inactive(threshold) for e in self.experiments]
         return ActiveInactiveDataset(
             molecules=self.molecules,
             predictions=self.predictions,
             experiments=experiments,
             prediction_type=self.prediction_type,
-            experiment_type=ExperimentType.is_active,
+            experiment_type=IsActive,
         )
 
     @model_validator(mode="after")
@@ -142,8 +127,8 @@ class Dataset(BaseModel):
         id_column: str,
         experimental_data_column: str,
         prediction_column: str,
-        prediction_type: PredictionType = DockingScore,
-        experiment_type: ExperimentType = ExperimentType.pic50,
+        prediction_type: PredictedMeasurementType,
+        experiment_type: ExperimentalMeasurementType,
         smiles_column: str = None,
     ) -> "Dataset":
         df = pd.read_csv(filename)
@@ -164,8 +149,8 @@ class Dataset(BaseModel):
         id_column: str,
         experimental_data_column: str,
         prediction_column: str,
-        prediction_type: PredictionType = DockingScore,
-        experiment_type: ExperimentType = ExperimentType.pic50,
+        prediction_type: PredictedMeasurementType,
+        experiment_type: ExperimentalMeasurementType,
         smiles_column: str = None,
     ) -> "Dataset":
         molecules = []
@@ -213,11 +198,9 @@ class ActiveInactiveDataset(Dataset):
     ActiveInactiveDataset
     """
 
-    @field_validator("experiment_type")
-    def check_experiment_type(cls, v):
-        if v != ExperimentType.is_active:
-            raise ValueError(f"Experiment type must be {ExperimentType.is_active}")
-        return v
+    experiment_type: ExperimentalMeasurementType = Field(
+        IsActive, frozen=True, description="Experiment type"
+    )
 
     @property
     def n_actives(self) -> int:
