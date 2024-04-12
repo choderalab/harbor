@@ -15,4 +15,5 @@ dependencies:
   - pytest
   - pandas
   - black
+  - openff-toolkit
 prefix: /Users/alexpayne/miniforge-pypy3/envs/harbor
