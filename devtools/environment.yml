@@ -7,10 +7,18 @@ dependencies:
   - scikit-learn
   - pydantic
   - ca-certificates
-  - openeye-toolkits
   - openssl
   - pytest
   - pandas
   - black
+  - plotly
+  - jupyter
+  - openeye-toolkits
   - rdkit
+  - certifi
   - openff-toolkit
+  - pytest-cov
+  - codecov
+  - pytest-console-scripts
+  - pytest-timeout
+  - pytest-xdist
