@@ -1,11 +1,7 @@
 name: harbor
 channels:
-  - schrodinger
-  - salilab
   - openeye
   - conda-forge
-  - http://conda.anaconda.org/omnia
-  - defaults
 dependencies:
   - python=3.10
   - scikit-learn
@@ -18,4 +14,3 @@ dependencies:
   - black
   - rdkit
   - openff-toolkit
-prefix: /Users/alexpayne/miniforge-pypy3/envs/harbor
