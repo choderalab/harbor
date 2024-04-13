@@ -3,7 +3,7 @@ harbor
 A home for docking evaluation and assessment
 
 
-[![GitHub Actions Build Status](https://github.com/choderalab/harbor/workflows/harbor-ci.yaml/badge.svg)](https://github.com/choderalab/harbor/actions?query=workflow%3ACI+branch%3Amain)
+[![GitHub Actions Build Status](https://github.com/choderalab/harbor/actions/workflows/harbor-ci.yaml/badge.svg)](https://github.com/choderalab/harbor/actions?query=workflow%3ACI+branch%3Amain)
 [![codecov](https://codecov.io/gh/choderalab/harbor/graph/badge.svg?token=V6EZKD9L2F)](https://codecov.io/gh/choderalab/harbor)
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/choderalab/harbor/main.svg)](https://results.pre-commit.ci/latest/github/choderalab/harbor/main)
 [![Documentation Status](https://readthedocs.org/projects/harbor/badge/?version=latest)](https://harbor.readthedocs.io/en/latest/?badge=latest)
