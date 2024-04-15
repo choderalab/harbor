@@ -60,3 +60,30 @@ def get_mcs_substructure(refmol: oechem.OEMol, querymol: oechem.OEMol):
     core_fragment = oechem.OEMol()
     oechem.OESubsetMol(core_fragment, mcs)
     return core_fragment
+
+
+def get_mcs_mol(mol1: oechem.OEMol, mol2: oechem.OEMol):
+    # Set atom and bond expressions
+    atomexpr = (
+        oechem.OEExprOpts_Aromaticity
+        | oechem.OEExprOpts_AtomicNumber
+        | oechem.OEExprOpts_FormalCharge
+        | oechem.OEExprOpts_RingMember
+    )
+    bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
+
+    # Set up the search pattern and MCS objects
+    pattern_query = oechem.OEQMol(mol1)
+    pattern_query.BuildExpressions(atomexpr, bondexpr)
+    mcss = oechem.OEMCSSearch(pattern_query)
+    mcss.SetMCSFunc(oechem.OEMCSMaxAtomsCompleteCycles())
+    try:
+        new_mcs = next(iter(mcss.Match(mol2, True)))
+        core_fragment = oechem.OEMol()
+        if not oechem.OESubsetMol(core_fragment, mol2, new_mcs):
+            raise RuntimeError(
+                f"Failed to generate mcs for {mol1.GetTitle()} & {mol2.GetTitle()}"
+            )
+    except StopIteration:
+        raise RuntimeError
+    return core_fragment
