@@ -1,4 +1,3 @@
-name: harbor
 channels:
   - openeye
   - conda-forge
