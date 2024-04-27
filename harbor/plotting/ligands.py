@@ -45,7 +45,6 @@ def plot_aligned_ligands(
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
-        | oechem.OEExprOpts_RingMember
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
@@ -90,7 +89,7 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
-        | oechem.OEExprOpts_RingMember
+
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
@@ -110,7 +109,9 @@ def plot_ligands_with_mcs(
     quantum_width=150,
     quantum_height=200,
 ):
-    n_ligands = len(mols)
+    # count n ligands + the mcs_mol
+    n_ligands = len(mols) # + 1
+
     # Prepare image
     cols = min(max_width, n_ligands)
     rows = int(np.ceil(n_ligands / max_width))
@@ -123,17 +124,24 @@ def plot_ligands_with_mcs(
     opts.SetTitleLocation(oedepict.OETitleLocation_Bottom)
     opts.SetHydrogenStyle(oedepict.OEHydrogenStyle_Hidden)
 
-    largest_mol = max(mols, key=lambda x: x.NumAtoms())
+    mol_array = np.array(mols)
+    n_atoms = np.array([mol.NumAtoms() for mol in mols])
+    largest_mol = mol_array[np.argmax(n_atoms)]
+    smallest_mol = mol_array[np.argmin(n_atoms)]
+    mols = np.delete(mol_array, np.argmin(n_atoms))
 
-    refscale = oedepict.OEGetMoleculeScale(largest_mol, opts)
-    oedepict.OEPrepareDepiction(largest_mol)
-    refdisp = oedepict.OE2DMolDisplay(largest_mol, opts)
+    refscale = oedepict.OEGetMoleculeScale(smallest_mol, opts)
+    opts.SetScale(refscale)
+    oedepict.OEPrepareDepiction(smallest_mol)
+    refdisp = oedepict.OE2DMolDisplay(smallest_mol, opts)
     refcell = grid.GetCell(1, 1)
     oedepict.OERenderMolecule(refcell, refdisp)
 
-    mcss = get_mcs_from_mcs_mol(mcs_mol)
+    mcss = get_mcs_from_mcs_mol(smallest_mol)
 
     for i, fitmol in enumerate(mols):
+        # account for the mol we plotted at 1,1
+        i += 1
         row, col = get_row_col(i, max_width, zero_indexed=False)
         print(row, col)
 
@@ -141,7 +149,7 @@ def plot_ligands_with_mcs(
 
         if not alignres.IsValid():
             oedepict.OEPrepareDepiction(fitmol)
-        opts.SetScale(refscale)
+        
         fitdisp = oedepict.OE2DMolDisplay(fitmol, opts)
         if alignres.IsValid():
             fitabset = oechem.OEAtomBondSet(
@@ -153,6 +161,8 @@ def plot_ligands_with_mcs(
                 oedepict.OEHighlightStyle_BallAndStick,
                 fitabset,
             )
+        fitcell = grid.GetCell(row, col)
+        oedepict.OERenderMolecule(fitcell, fitdisp)
 
     oedepict.OEWriteImage(filename, image)
 

@@ -68,7 +68,6 @@ def get_mcs_mol(mol1: oechem.OEMol, mol2: oechem.OEMol):
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
-        | oechem.OEExprOpts_RingMember
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
@@ -95,7 +94,6 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
-        | oechem.OEExprOpts_RingMember
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
