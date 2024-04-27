@@ -87,3 +87,21 @@ def get_mcs_mol(mol1: oechem.OEMol, mol2: oechem.OEMol):
     except StopIteration:
         raise RuntimeError
     return core_fragment
+
+
+def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
+    # Prep MCS
+    atomexpr = (
+        oechem.OEExprOpts_Aromaticity
+        | oechem.OEExprOpts_AtomicNumber
+        | oechem.OEExprOpts_FormalCharge
+        | oechem.OEExprOpts_RingMember
+    )
+    bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
+
+    # create maximum common substructure object
+    pattern_query = oechem.OEQMol(mcs_mol)
+    pattern_query.BuildExpressions(atomexpr, bondexpr)
+    mcss = oechem.OEMCSSearch(pattern_query)
+    mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
+    return mcss
