@@ -89,6 +89,7 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
+        | oechem.OEExprOpts_RingMember
 
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
@@ -100,6 +101,14 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
     mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
     return mcss
 
+def get_n_rows_and_cols(n_mols):
+    return int(np.round(np.sqrt(n_mols))), int(np.ceil(np.sqrt(n_mols)))
+
+def get_row_col(i, rows, cols,zero_indexed=True):
+    row = i // cols + (0 if zero_indexed else 1)
+    col = i % cols + (0 if zero_indexed else 1)
+    return int(row), int(col)
+
 
 def plot_ligands_with_mcs(
     filename: str,
@@ -108,14 +117,48 @@ def plot_ligands_with_mcs(
     max_width: int = 4,
     quantum_width=150,
     quantum_height=200,
+    reference="smallest"
 ):
     # count n ligands + the mcs_mol
     n_ligands = len(mols) # + 1
+    print(f"{n_ligands} molecules to plot")
+    print([mol.GetTitle() for mol in mols])
 
+    mol_array = np.array(mols)
+    n_atoms = np.array([mol.NumAtoms() for mol in mols])
+    print(n_atoms)
+
+    if reference == "smallest":
+        order = np.argsort(n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+
+        smallest_sort = np.argmin(n_atoms)
+        refmol = mol_array[smallest_sort]
+        mols = np.delete(mol_array, smallest_sort)
+    elif reference == "largest":
+        order = np.argsort(-n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+        
+        largest_sort = np.argmax(n_atoms)
+        refmol = mol_array[largest_sort]
+        mols = np.delete(mol_array, largest_sort)
+    elif reference == "mcs_mol":
+        order = np.argsort(n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+
+        mols = mol_array
+        refmol = mcs_mol
+        n_ligands += 1
+    else:
+        raise NotImplementedError
+    
     # Prepare image
-    cols = min(max_width, n_ligands)
-    rows = int(np.ceil(n_ligands / max_width))
-    print(rows, cols)
+    rows, cols = get_n_rows_and_cols(n_ligands)
+    
+    print(f"Generating a figure with {rows} rows and {cols} columns")
     image = oedepict.OEImage(quantum_width * cols, quantum_height * rows)
     grid = oedepict.OEImageGrid(image, rows, cols)
     opts = oedepict.OE2DMolDisplayOptions(
@@ -124,25 +167,24 @@ def plot_ligands_with_mcs(
     opts.SetTitleLocation(oedepict.OETitleLocation_Bottom)
     opts.SetHydrogenStyle(oedepict.OEHydrogenStyle_Hidden)
 
-    mol_array = np.array(mols)
-    n_atoms = np.array([mol.NumAtoms() for mol in mols])
-    largest_mol = mol_array[np.argmax(n_atoms)]
-    smallest_mol = mol_array[np.argmin(n_atoms)]
-    mols = np.delete(mol_array, np.argmin(n_atoms))
+    refscale = oedepict.OEGetMoleculeScale(refmol, opts)
+    
 
-    refscale = oedepict.OEGetMoleculeScale(smallest_mol, opts)
+    oedepict.OEPrepareDepiction(refmol)
+
+    mcss = get_mcs_from_mcs_mol(refmol)
+    oedepict.OEPrepareAlignedDepiction(refmol, mcss)
+    
     opts.SetScale(refscale)
-    oedepict.OEPrepareDepiction(smallest_mol)
-    refdisp = oedepict.OE2DMolDisplay(smallest_mol, opts)
+    refdisp = oedepict.OE2DMolDisplay(refmol, opts)
     refcell = grid.GetCell(1, 1)
+
     oedepict.OERenderMolecule(refcell, refdisp)
 
-    mcss = get_mcs_from_mcs_mol(smallest_mol)
-
+    print([mol.GetTitle() for mol in mols])
     for i, fitmol in enumerate(mols):
-        # account for the mol we plotted at 1,1
         i += 1
-        row, col = get_row_col(i, max_width, zero_indexed=False)
+        row, col = get_row_col(i, rows, cols, zero_indexed=False)
         print(row, col)
 
         alignres = oedepict.OEPrepareAlignedDepiction(fitmol, mcss)
@@ -165,9 +207,3 @@ def plot_ligands_with_mcs(
         oedepict.OERenderMolecule(fitcell, fitdisp)
 
     oedepict.OEWriteImage(filename, image)
-
-
-def get_row_col(i, max_cols, zero_indexed=True):
-    row = i // max_cols + (0 if zero_indexed else 1)
-    col = i % max_cols + (0 if zero_indexed else 1)
-    return row, col

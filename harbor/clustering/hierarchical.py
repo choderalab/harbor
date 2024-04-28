@@ -82,8 +82,7 @@ def get_clusters_from_mcs_matrix(
             continue
 
         j = potential_match[i]
-        if i in ignore:
-            print(i)
+        if i in ignore or j in ignore:
             continue
         if j in singles:
             singles.append(i)
@@ -107,14 +106,6 @@ def get_clusters_from_mcs_matrix(
             else:
                 singles.append(i)
                 ignore.append(i)
-        print("Pairs", pairs)
-        print("Singles", singles)
-        print("Outliers", outliers)
-        print("Ignore", ignore)
-    print("Pairs", pairs)
-    print("Singles", singles)
-    print("Outliers", outliers)
-    print("Ignore", ignore)
 
     new = [
         ClusterCenter.from_clusters(height, i, clusters[j], clusters[k])
@@ -193,33 +184,6 @@ class HeirarchicalClustering(BaseModel):
             # get new cluster centers
             results = get_clusters_from_mcs_matrix(
                 mcs_matrix, clusters, cutoff=cutoff, height=i
-            )
-
-            print("New clusters")
-            print(
-                [
-                    child.cluster_id if isinstance(child, ClusterCenter) else child
-                    for cluster in results.new
-                    for child in cluster.children
-                ]
-            )
-
-            print("Singles")
-            print(
-                [
-                    child.cluster_id if isinstance(child, ClusterCenter) else child
-                    for cluster in results.singles
-                    for child in cluster.children
-                ]
-            )
-
-            print("Outliers")
-            print(
-                [
-                    child.cluster_id if isinstance(child, ClusterCenter) else child
-                    for cluster in results.outliers
-                    for child in cluster.children
-                ]
             )
 
             # update clusters with the new cluster centers and the previously unmatched singles
