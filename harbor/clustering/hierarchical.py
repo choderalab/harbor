@@ -3,6 +3,7 @@ from openeye import oechem
 from pydantic import Field, BaseModel, model_validator
 from typing import Union
 import numpy as np
+from enum import Enum
 
 
 class ClusterCenter(BaseModel):
@@ -47,9 +48,15 @@ class ClusterResults(BaseModel):
         "and therefore should be ignored for the rest of the clustering",
     )
 
+class ClusterStatus(Enum):
+    unassigned = 0
+    success = 1
+    single = 2
+    outlier = 3
+
 
 def get_clusters_from_mcs_matrix(
-    matrix: np.ndarray,
+    mtx: np.ndarray,
     clusters,
     cutoff,
     height: int = Field(..., description="maximum number of layers above 0"),
@@ -60,61 +67,71 @@ def get_clusters_from_mcs_matrix(
     clusters = np.array(clusters)
     print([cluster.cluster_id for cluster in clusters])
 
-    # set the diagonal to 0
-    np.fill_diagonal(matrix, 0)
-    print(matrix)
-
-    potential_match = np.argsort(matrix)[:, -1]
-
-    duplicates = np.where(np.bincount(potential_match) > 1)[0]
-    max_mcs = np.sort(matrix)[:, -1]
-    print(potential_match)
-    print(max_mcs)
+    # set the diagonal to 0 so we don't match with ourself
+    np.fill_diagonal(mtx, 0)
+    status_array = np.array([ClusterStatus.unassigned]*len(clusters))
+    print(mtx)
 
     pairs = []
-    singles = []
-    outliers = []
-    ignore = []
-    for i in range(len(potential_match)):
-        print(i)
-        if max_mcs[i] < cutoff:
-            outliers.append(i)
+    for i, cluster in enumerate(clusters):
+
+        # skip if already assigned
+        if status_array[i] != ClusterStatus.unassigned:
             continue
 
-        j = potential_match[i]
-        if i in ignore or j in ignore:
-            continue
-        if j in singles:
-            singles.append(i)
-            continue
-        if j in duplicates:
-            # pick a single pair to combine, and remove all others
-            all_matches = np.where(potential_match == j)[0]
-            print(i, j, all_matches)
+        # get largest mcs
+        mcs_array = mtx[i]
+        max_mcs = mcs_array.max()
 
-            # for each reciprocal match, find the one with the highest mcs
-            best_match = all_matches[np.argmax(max_mcs[all_matches])]
-            if best_match == i:
-                pairs.append((i, j))
-                ignore.extend([i, j])
-            else:
-                singles.append(i)
+        # if max mcs < cutoff, add to outliers
+        if max_mcs < cutoff:
+            status_array[i] = ClusterStatus.outlier
+
+        # get all potential matches
+        potential_matches = np.where(mcs_array == max_mcs)[0]
+        print(i, potential_matches)
+        
+        # use to break if we find a match
+        fail_to_find = True
+        for j in potential_matches:
+
+            # potential match can't have already been assigned
+            if status_array[j] != ClusterStatus.unassigned:
+                continue
+
+            # get the max mcs of the potential match
+            mcs_array = mtx[j]
+            sweetheart_max_mcs = mcs_array.max()
+            
+            # for reasons unknown to me, the MCS isn't actually reciprocal
+            reciprocal_mcs = mtx[j, i]
+
+            print(i, j, max_mcs, sweetheart_max_mcs, reciprocal_mcs)
+
+
+            # only match if the max mcs of the potential match is <= to our mcs
+            # with them
+            if max_mcs >= sweetheart_max_mcs or reciprocal_mcs >= sweetheart_max_mcs:
+                fail_to_find = False
+                break
+        
+        if fail_to_find:
+            status_array[i] = ClusterStatus.single
         else:
-            if potential_match[j] == i:
-                pairs.append((i, j))
-                ignore.extend([i, j])
-            else:
-                singles.append(i)
-                ignore.append(i)
-
+            pairs.append((i, j))
+            status_array[i] = ClusterStatus.success
+            status_array[j] = ClusterStatus.success
+    print(status_array)
     new = [
         ClusterCenter.from_clusters(height, i, clusters[j], clusters[k])
         for i, (j, k) in enumerate(pairs)
     ]
+    singles = clusters[status_array == ClusterStatus.single].tolist()
+    outliers = clusters[status_array == ClusterStatus.outlier].tolist()
     return ClusterResults(
         new=new,
-        singles=clusters[singles].tolist(),
-        outliers=clusters[outliers].tolist(),
+        singles=singles,
+        outliers=outliers,
     )
 
 
