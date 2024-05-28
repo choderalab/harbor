@@ -235,7 +235,8 @@ class Evaluator(ModelBase):
     )
     dataset_split: SplitBase = Field(..., description="Dataset split")
     structure_choice: StructureChoice = Field(
-        ..., description="How to choose which structures to dock to"
+        StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
+        description="How to choose which structures to dock to",
     )
     scorer: Scorer = Field(..., description="How to score and rank resulting poses")
     evaluator: BinaryEvaluation = Field(
@@ -308,6 +309,7 @@ class Settings(BaseModel):
     reference_ligand_column: str = "Reference_Ligand"
     reference_structure_column: str = "Reference_Structure"
     pose_id_column: str = "Pose_ID"
+    n_poses: list[int] = [1, 2, 5, 10, 20, 50]
 
     @classmethod
     def from_yml_file(cls, file_path: Path) -> "Settings":
@@ -323,29 +325,3 @@ class Settings(BaseModel):
         with open(file_path, "w") as f:
             yaml.safe_dump(self.dict(), f)
         return file_path
-
-
-class EvaluatorFactory(BaseModel):
-    settings: Settings
-
-    def get_evaluators(self) -> list[Evaluator]:
-        evaluators = []
-        random_splits = [
-            RandomSplit(
-                variable=self.settings.reference_ligand_column,
-                n_splits=1,
-                n_per_split=n_per_split,
-            )
-            for n_per_split in self.settings.n_per_split
-        ]
-        date_splits = [
-            DateSplit(
-                variable=self.settings.reference_ligand_column,
-                n_splits=1,
-                n_per_split=n_per_split,
-                date_dict={},
-            )
-            for n_per_split in self.settings.n_per_split
-        ]
-
-        return evaluators
