@@ -1,0 +1,56 @@
+date_dict_path: /Users/alexpayne/Scientific_Projects/asapdiscovery-sars-retrospective/science/20240403_multi_pose_docking_v2/20240430_analyze_cross_docking_results/20240503_inputs_analysis/date_dict.json
+n_structures:
+  - 1
+  - 2
+  - 5
+  - 10
+structure_choice_variables:
+  - MCSS_Similarity: Num_Atoms_in_MCS
+  - ECFP4_Similarity: Tanimoto
+score_variables:
+  - POSIT_Probability: POSIT_Probability
+n_bootstraps: 1000
+n_per_split:
+- 1
+- 5
+- 10
+- 15
+- 20
+- 25
+- 30
+- 35
+- 40
+- 45
+- 50
+- 55
+- 60
+- 65
+- 70
+- 75
+- 80
+- 85
+- 90
+- 95
+- 100
+- 105
+- 110
+- 115
+- 120
+- 125
+- 130
+- 135
+- 140
+- 145
+- 150
+- 155
+- 160
+- 165
+- 170
+- 175
+- 180
+- 185
+- 190
+- 195
+- 200
+- 205
+rmsd_cutoff: 2.0
