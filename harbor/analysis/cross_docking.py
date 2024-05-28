@@ -102,8 +102,8 @@ class SorterBase(ModelBase):
     higher_is_better: bool = Field(
         True, description="Higher values are better. Defaults True"
     )
-    number_to_return: None | int = Field(
-        description="Number of values to return. Returns all values if None."
+    number_to_return: int = Field(
+        None, description="Number of values to return. Returns all values if None."
     )
 
     def run(self, df, groupby: list[str]) -> pd.DataFrame:
