@@ -90,7 +90,6 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
         | oechem.OEExprOpts_RingMember
-
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
@@ -101,10 +100,12 @@ def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
     mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
     return mcss
 
+
 def get_n_rows_and_cols(n_mols):
     return int(np.round(np.sqrt(n_mols))), int(np.ceil(np.sqrt(n_mols)))
 
-def get_row_col(i, rows, cols,zero_indexed=True):
+
+def get_row_col(i, rows, cols, zero_indexed=True):
     row = i // cols + (0 if zero_indexed else 1)
     col = i % cols + (0 if zero_indexed else 1)
     return int(row), int(col)
@@ -112,15 +113,15 @@ def get_row_col(i, rows, cols,zero_indexed=True):
 
 def plot_ligands_with_mcs(
     filename: str,
-    mcs_mol: oechem.OEMol,
+    mcs_mol: oechem.OEMol = None,
     mols=list[oechem.OEMol],
     max_width: int = 4,
     quantum_width=150,
     quantum_height=200,
-    reference="smallest"
+    reference="smallest",
 ):
     # count n ligands + the mcs_mol
-    n_ligands = len(mols) # + 1
+    n_ligands = len(mols)  # + 1
     print(f"{n_ligands} molecules to plot")
     print([mol.GetTitle() for mol in mols])
 
@@ -140,11 +141,11 @@ def plot_ligands_with_mcs(
         order = np.argsort(-n_atoms)
         mol_array = mol_array[order]
         n_atoms = n_atoms[order]
-        
+
         largest_sort = np.argmax(n_atoms)
         refmol = mol_array[largest_sort]
         mols = np.delete(mol_array, largest_sort)
-    elif reference == "mcs_mol":
+    elif reference == "mcs_mol" and mcs_mol is not None:
         order = np.argsort(n_atoms)
         mol_array = mol_array[order]
         n_atoms = n_atoms[order]
@@ -154,10 +155,10 @@ def plot_ligands_with_mcs(
         n_ligands += 1
     else:
         raise NotImplementedError
-    
+
     # Prepare image
     rows, cols = get_n_rows_and_cols(n_ligands)
-    
+
     print(f"Generating a figure with {rows} rows and {cols} columns")
     image = oedepict.OEImage(quantum_width * cols, quantum_height * rows)
     grid = oedepict.OEImageGrid(image, rows, cols)
@@ -168,13 +169,12 @@ def plot_ligands_with_mcs(
     opts.SetHydrogenStyle(oedepict.OEHydrogenStyle_Hidden)
 
     refscale = oedepict.OEGetMoleculeScale(refmol, opts)
-    
 
     oedepict.OEPrepareDepiction(refmol)
 
     mcss = get_mcs_from_mcs_mol(refmol)
     oedepict.OEPrepareAlignedDepiction(refmol, mcss)
-    
+
     opts.SetScale(refscale)
     refdisp = oedepict.OE2DMolDisplay(refmol, opts)
     refcell = grid.GetCell(1, 1)
@@ -191,7 +191,7 @@ def plot_ligands_with_mcs(
 
         if not alignres.IsValid():
             oedepict.OEPrepareDepiction(fitmol)
-        
+
         fitdisp = oedepict.OE2DMolDisplay(fitmol, opts)
         if alignres.IsValid():
             fitabset = oechem.OEAtomBondSet(
