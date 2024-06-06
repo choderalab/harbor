@@ -23,6 +23,12 @@ This package is basically a wrapper / guide for using various packages such as S
 ```bash
 git clone git@github.com:choderalab/harbor.git
 cd harbor
-mamba env create -f devtools/environment_macos.yml
+
+# this creates a mamba / conda environment and install all the packages needed for the program
+mamba env create -f devtools/environment.yml
+
+# this installs harbor into the harbor environment
+# use pip install -e. if you want to develop it and have it be an editable install
+conda activate harbor
 pip install .
 ```
