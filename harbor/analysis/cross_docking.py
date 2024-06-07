@@ -166,14 +166,36 @@ class FractionGood(ModelBase):
     @property
     def ci_upper(self):
         n_reps = len(self.replicates)
-        self.replicates.sort()
-        return self.replicates[int(0.975 * n_reps)]
+        if n_reps == 1:
+            # use beta function to get CIs
+            from scipy.stats import beta
+
+            ci_upper = beta(
+                self.fraction * self.total + 1, (1 - self.fraction) * self.total + 1
+            ).interval(0.95)[1]
+
+        else:
+            # otherwise used bootstrapped results
+            self.replicates.sort()
+            ci_upper = self.replicates[int(0.975 * n_reps)]
+        return ci_upper
 
     @property
     def ci_lower(self):
         n_reps = len(self.replicates)
-        self.replicates.sort()
-        return self.replicates[int(0.025 * n_reps)]
+        if n_reps == 1:
+            # use beta function to get CIs
+            from scipy.stats import beta
+
+            ci_lower = beta(
+                self.fraction * self.total + 1, (1 - self.fraction) * self.total + 1
+            ).interval(0.95)[0]
+
+        else:
+            # otherwise used bootstrapped results
+            self.replicates.sort()
+            ci_lower = self.replicates[int(0.025 * n_reps)]
+        return ci_lower
 
     @classmethod
     def from_replicates(cls, reps: list["FractionGood"]) -> "FractionGood":
