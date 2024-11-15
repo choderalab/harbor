@@ -45,7 +45,6 @@ def plot_aligned_ligands(
         oechem.OEExprOpts_Aromaticity
         | oechem.OEExprOpts_AtomicNumber
         | oechem.OEExprOpts_FormalCharge
-        | oechem.OEExprOpts_RingMember
     )
     bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
 
@@ -81,4 +80,130 @@ def plot_aligned_ligands(
 
         fitcell = grid.GetCell(row, col)
         oedepict.OERenderMolecule(fitcell, fitdisp)
+    oedepict.OEWriteImage(filename, image)
+
+
+def get_mcs_from_mcs_mol(mcs_mol: oechem.OEMol):
+    # Prep MCS
+    atomexpr = (
+        oechem.OEExprOpts_Aromaticity
+        | oechem.OEExprOpts_AtomicNumber
+        | oechem.OEExprOpts_FormalCharge
+        | oechem.OEExprOpts_RingMember
+    )
+    bondexpr = oechem.OEExprOpts_Aromaticity | oechem.OEExprOpts_BondOrder
+
+    # create maximum common substructure object
+    pattern_query = oechem.OEQMol(mcs_mol)
+    pattern_query.BuildExpressions(atomexpr, bondexpr)
+    mcss = oechem.OEMCSSearch(pattern_query)
+    mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
+    return mcss
+
+
+def get_n_rows_and_cols(n_mols):
+    return int(np.round(np.sqrt(n_mols))), int(np.ceil(np.sqrt(n_mols)))
+
+
+def get_row_col(i, rows, cols, zero_indexed=True):
+    row = i // cols + (0 if zero_indexed else 1)
+    col = i % cols + (0 if zero_indexed else 1)
+    return int(row), int(col)
+
+
+def plot_ligands_with_mcs(
+    filename: str,
+    mcs_mol: oechem.OEMol = None,
+    mols=list[oechem.OEMol],
+    max_width: int = 4,
+    quantum_width=150,
+    quantum_height=200,
+    reference="smallest",
+):
+    # count n ligands + the mcs_mol
+    n_ligands = len(mols)  # + 1
+    print(f"{n_ligands} molecules to plot")
+    print([mol.GetTitle() for mol in mols])
+
+    mol_array = np.array(mols)
+    n_atoms = np.array([mol.NumAtoms() for mol in mols])
+    print(n_atoms)
+
+    if reference == "smallest":
+        order = np.argsort(n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+
+        smallest_sort = np.argmin(n_atoms)
+        refmol = mol_array[smallest_sort]
+        mols = np.delete(mol_array, smallest_sort)
+    elif reference == "largest":
+        order = np.argsort(-n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+
+        largest_sort = np.argmax(n_atoms)
+        refmol = mol_array[largest_sort]
+        mols = np.delete(mol_array, largest_sort)
+    elif reference == "mcs_mol" and mcs_mol is not None:
+        order = np.argsort(n_atoms)
+        mol_array = mol_array[order]
+        n_atoms = n_atoms[order]
+
+        mols = mol_array
+        refmol = mcs_mol
+        n_ligands += 1
+    else:
+        raise NotImplementedError
+
+    # Prepare image
+    rows, cols = get_n_rows_and_cols(n_ligands)
+
+    print(f"Generating a figure with {rows} rows and {cols} columns")
+    image = oedepict.OEImage(quantum_width * cols, quantum_height * rows)
+    grid = oedepict.OEImageGrid(image, rows, cols)
+    opts = oedepict.OE2DMolDisplayOptions(
+        grid.GetCellWidth(), grid.GetCellHeight(), oedepict.OEScale_AutoScale
+    )
+    opts.SetTitleLocation(oedepict.OETitleLocation_Bottom)
+    opts.SetHydrogenStyle(oedepict.OEHydrogenStyle_Hidden)
+
+    refscale = oedepict.OEGetMoleculeScale(refmol, opts)
+
+    oedepict.OEPrepareDepiction(refmol)
+
+    mcss = get_mcs_from_mcs_mol(refmol)
+    oedepict.OEPrepareAlignedDepiction(refmol, mcss)
+
+    opts.SetScale(refscale)
+    refdisp = oedepict.OE2DMolDisplay(refmol, opts)
+    refcell = grid.GetCell(1, 1)
+
+    oedepict.OERenderMolecule(refcell, refdisp)
+
+    print([mol.GetTitle() for mol in mols])
+    for i, fitmol in enumerate(mols):
+        i += 1
+        row, col = get_row_col(i, rows, cols, zero_indexed=False)
+        print(row, col)
+
+        alignres = oedepict.OEPrepareAlignedDepiction(fitmol, mcss)
+
+        if not alignres.IsValid():
+            oedepict.OEPrepareDepiction(fitmol)
+
+        fitdisp = oedepict.OE2DMolDisplay(fitmol, opts)
+        if alignres.IsValid():
+            fitabset = oechem.OEAtomBondSet(
+                alignres.GetTargetAtoms(), alignres.GetTargetBonds()
+            )
+            oedepict.OEAddHighlighting(
+                fitdisp,
+                oechem.OEBlueTint,
+                oedepict.OEHighlightStyle_BallAndStick,
+                fitabset,
+            )
+        fitcell = grid.GetCell(row, col)
+        oedepict.OERenderMolecule(fitcell, fitdisp)
+
     oedepict.OEWriteImage(filename, image)
