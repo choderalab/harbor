@@ -202,7 +202,7 @@ class FractionGood(ModelBase):
         all_fracs = np.array([rep.fraction for rep in reps])
         totals = np.array([rep.total for rep in reps])
         return FractionGood(
-            total=totals.mean(), fraction=all_fracs.mean(), replicates=list(all_fracs)
+            total=totals.max(), fraction=all_fracs.mean(), replicates=list(all_fracs)
         )
 
     def get_records(self) -> dict:
