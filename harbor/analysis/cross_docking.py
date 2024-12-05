@@ -322,6 +322,7 @@ class Results(BaseModel):
 
 
 class Settings(BaseModel):
+    date_dict_path: str = Field(None, description="Path to the date dict")
     n_bootstraps: int = 1000
     rmsd_cutoff: float = 2.0
     n_per_split: list[int] = list([1] + list(range(5, 206, 5)))
