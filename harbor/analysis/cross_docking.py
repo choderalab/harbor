@@ -61,6 +61,17 @@ class RandomSplit(SplitBase):
             dfs.append(df[df[self.variable].isin(variable_list[start:end])])
         return dfs
 
+from datetime import datetime, timedelta
+## write a function that takes a structure and returns a random structure within timedelta from it
+def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)):
+    date = date_dict[structure]
+    date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+    start_date = date - timedelta
+    end_date = date + timedelta
+    possible_structures = [key for key, value in date_dict.items() if
+                           start_date <= datetime.strptime(value, "%Y-%m-%d %H:%M:%S") <= end_date]
+    return np.random.choice(possible_structures)
+
 
 class DateSplit(SplitBase):
     """
@@ -76,20 +87,31 @@ class DateSplit(SplitBase):
         True,
         description="Whether to split the data uniformly in time (i.e. 1 split every N months) or balanced such that each split has the same number of structures",
     )
+    initial_structure_error: int = Field(1, description="Initial error in the structure date. Error of 1 means no error (pick the first structure every time). Error of 20 means when you are picking up to the first 20 structures, randomize them.")
+    randomize_by_n_days: int = Field(0, description="Randomize the structures by n days. If 0 no randomization is done. If 1 or greater, for each structure, it can be randomly replaced by any other structure collected on that day or n-1 days from it's collection date.")
 
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
         dates = np.array(list(self.date_dict.values()))
         structures = np.array(list(self.date_dict.keys()))
         sort_idx = np.argsort(dates)
         structure_list = structures[sort_idx]
-
         variable_splits = []
         dfs = []
         for i in range(self.n_splits):
             start = i * self.n_per_split
             end = i * self.n_per_split + self.n_per_split
-            variable_splits.append(structure_list[start:end])
-            dfs.append(df[df[self.variable].isin(structure_list[start:end])])
+
+            if self.n_per_split < self.initial_structure_error:
+                variable_split = np.random.choice(structure_list[start:self.initial_structure_error], self.n_per_split, replace=False)
+
+            elif self.randomize_by_n_days > 0:
+                # I think this is probably super slow!
+                variable_split = structure_list[start:end]
+                variable_split = [get_random_structure(structure, self.date_dict, timedelta=timedelta(days=self.randomize_by_n_days)) for structure in variable_split]
+            else:
+                variable_split = structure_list[start:end]
+            variable_splits.append(variable_split)
+            dfs.append(df[df[self.variable].isin(variable_split)])
         return dfs
 
 
