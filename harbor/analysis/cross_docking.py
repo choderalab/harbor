@@ -26,6 +26,10 @@ class SplitBase(ModelBase):
     variable: str = Field(description="Name of variable used to split the data")
     n_splits: int = Field(1, description="number of splits to generate")
     n_per_split: int = Field(..., description="Number of values per split to generate")
+    deterministic: bool = Field(
+        False,
+        description="Whether the split is deterministic, i.e. if True it should not be run in the bootstrapping loop.",
+    )
 
     @abc.abstractmethod
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
@@ -36,7 +40,11 @@ class SplitBase(ModelBase):
         return f"{self.name}_{self.n_per_split}"
 
     def get_records(self) -> dict:
-        return {"Split": self.name, "N_Per_Split": self.n_per_split}
+        return {
+            "Split": self.name,
+            "N_Per_Split": self.n_per_split,
+            "Split_Variable": self.variable,
+        }
 
 
 class RandomSplit(SplitBase):
@@ -136,6 +144,46 @@ class DateSplit(SplitBase):
             variable_splits.append(variable_split)
             dfs.append(df[df[self.variable].isin(variable_split)])
         return dfs
+
+
+class SimilaritySplit(SplitBase):
+    """
+    Splits the structures available to dock to by similarity to the query ligand
+    "Variable" is the column name for the similarity between the query and reference ligands
+    """
+
+    name: str = "SimilaritySplit"
+    threshold: float = Field(
+        0.5,
+        description="Threshold to use to determine if two structures are similar enough to be in the same split",
+    )
+    higher_is_more_similar: bool = Field(
+        True, description="Higher values are more similar"
+    )
+    include_similar: bool = Field(
+        True,
+        description="If True, include structures that are more similar than the threshold. Otherwise, include structures that are less similar.",
+    )
+    deterministic: bool = True
+
+    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+        dfs = []
+        # this is a bit of a confusing logic gate but if you sort it out it makes sense
+        if self.include_similar == self.higher_is_more_similar:
+            dfs.append(df[df[self.variable] >= self.threshold])
+        elif self.include_similar != self.higher_is_more_similar:
+            dfs.append(df[df[self.variable] <= self.threshold])
+        return dfs
+
+    def get_records(self) -> dict:
+        return {
+            "Split": self.name,
+            "N_Per_Split": self.n_per_split,
+            "Split_Variable": self.variable,
+            "Similarity_Threshold": self.threshold,
+            "Include_Similar": self.include_similar,
+            "Higher_Is_More_Similar": self.higher_is_more_similar,
+        }
 
 
 class SorterBase(ModelBase):
@@ -278,6 +326,8 @@ class BinaryEvaluation(ModelBase):
 
     def run(self, df, groupby: list[str] = ()) -> FractionGood:
         total = len(df.groupby(groupby))
+        if total == 0:
+            return FractionGood(total=0, fraction=0)
         if self.below_cutoff_is_good:
             fraction = df[self.variable].apply(lambda x: x <= self.cutoff).sum() / total
         else:
@@ -320,6 +370,9 @@ class Evaluator(ModelBase):
             subset_df = self.structure_choice.run(split1, groupby=self.groupby)
             subset_df = self.scorer.run(subset_df, groupby=self.groupby)
             results.append(self.evaluator.run(subset_df, groupby=self.groupby))
+            if self.dataset_split.deterministic:
+                # no need to run more than once because nothing will change!
+                break
         return FractionGood.from_replicates(results)
 
     @property
@@ -352,6 +405,11 @@ class Results(BaseModel):
         mydict = self.evaluator.get_records()
         mydict.update(self.fraction_good.get_records())
         return mydict
+
+    @classmethod
+    def calculate_result(cls, evaluator: Evaluator, df: pd.DataFrame) -> "Results":
+        result = evaluator.run(df)
+        return cls(evaluator=evaluator, fraction_good=result)
 
     @classmethod
     def calculate_results(
