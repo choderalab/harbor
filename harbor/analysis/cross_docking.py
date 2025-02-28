@@ -1,12 +1,14 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import abc
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
+from typing import Optional
 
 
 class ModelBase(BaseModel):
+    type_: str = Field(..., description="Type of model")
 
     @abc.abstractmethod
     def plot_name(self) -> str:
@@ -23,6 +25,7 @@ class SplitBase(ModelBase):
     """
 
     name: str = "SplitBase"
+    type_: str = "SplitBase"
     variable: str = Field(description="Name of variable used to split the data")
     n_splits: int = Field(1, description="number of splits to generate")
     n_per_split: int = Field(..., description="Number of values per split to generate")
@@ -53,6 +56,7 @@ class RandomSplit(SplitBase):
     """
 
     name: str = "RandomSplit"
+    type_: str = "RandomSplit"
 
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
         from random import shuffle
@@ -93,6 +97,7 @@ class DateSplit(SplitBase):
     """
 
     name: str = "DateSplit"
+    type_: str = "DateSplit"
     date_dict: dict = Field(
         ...,
         description="Dictionary of dates to split the data by of the form dict[str, str] where the key is the structure name and the value is the date",
@@ -153,6 +158,7 @@ class SimilaritySplit(SplitBase):
     """
 
     name: str = "SimilaritySplit"
+    type_: str = "SimilaritySplit"
     threshold: float = Field(
         0.5,
         description="Threshold to use to determine if two structures are similar enough to be in the same split",
@@ -187,6 +193,7 @@ class SimilaritySplit(SplitBase):
 
 
 class SorterBase(ModelBase):
+    type_: str = "SorterBase"
     name: str = Field(..., description="Name of sorting method")
     category: str = Field(
         ..., description="Category of sort (i.e. why is sorting necessary here"
@@ -195,9 +202,15 @@ class SorterBase(ModelBase):
     higher_is_better: bool = Field(
         True, description="Higher values are better. Defaults True"
     )
-    number_to_return: int = Field(
+    number_to_return: Optional[int] = Field(
         None, description="Number of values to return. Returns all values if None."
     )
+
+    @field_validator("number_to_return", mode="before")
+    def allow_number_to_return_to_be_none(cls, v):
+        if v is None:
+            return None
+        return v
 
     def run(self, df, groupby: list[str]) -> pd.DataFrame:
         return (
@@ -220,14 +233,17 @@ class SorterBase(ModelBase):
 
 
 class StructureChoice(SorterBase):
+    type_: str = "StructureChoice"
     category: str = "StructureChoice"
 
 
 class Scorer(SorterBase):
     category: str = "Score"
+    type_: str = "Scorer"
 
 
 class PoseSelector(SorterBase):
+    type_: str = "PoseSelector"
     category: str = "PoseSelection"
     groupby: list[str] = ["Query_Ligand", "Reference_Ligand"]
     higher_is_better: bool = False
@@ -240,6 +256,7 @@ class FractionGood(ModelBase):
     from pydantic import confloat
 
     name: str = "FractionGood"
+    type_: str = "FractionGood"
     total: int = Field(..., description="Total number of items being evaluated")
     fraction: confloat(ge=0, le=1) = Field(
         ..., description='Fraction of "good" values returned'
@@ -315,6 +332,7 @@ class FractionGood(ModelBase):
 
 class BinaryEvaluation(ModelBase):
     name: str = "BinaryEvaluation"
+    type_: str = "BinaryEvaluation"
     variable: str = Field(..., description="Variable used to evaluate the results")
     cutoff: float = Field(
         ..., description="Cutoff used to determine if a result is good"
@@ -344,8 +362,36 @@ class BinaryEvaluation(ModelBase):
         return "_".join([self.name, self.variable, self.cutoff])
 
 
+def get_class_from_name(name: str):
+    """
+    Is this good? Is it safe? Is it smart? I don't know!
+    :param name:
+    :return:
+    """
+    match name:
+        case "RandomSplit":
+            return RandomSplit
+        case "DateSplit":
+            return DateSplit
+        case "SimilaritySplit":
+            return SimilaritySplit
+        case "StructureChoice":
+            return StructureChoice
+        case "Scorer":
+            return Scorer
+        case "PoseSelector":
+            return PoseSelector
+        case "FractionGood":
+            return FractionGood
+        case "BinaryEvaluation":
+            return BinaryEvaluation
+        case "Evaluator":
+            return Evaluator
+
+
 class Evaluator(ModelBase):
     name: str = "Evaluator"
+    type_: str = "Evaluator"
     pose_selector: PoseSelector = Field(
         PoseSelector(name="Default", variable="Pose_ID", number_to_return=1),
         description="How to choose which poses to keep",
@@ -374,6 +420,35 @@ class Evaluator(ModelBase):
                 # no need to run more than once because nothing will change!
                 break
         return FractionGood.from_replicates(results)
+
+    @field_validator(
+        "pose_selector",
+        "dataset_split",
+        "structure_choice",
+        "scorer",
+        "evaluator",
+        mode="before",
+    )
+    def class_from_dict(cls, v):
+        if isinstance(v, dict):
+            return get_class_from_name(v["type_"])(**v)
+        else:
+            return v
+
+    def to_json_file(self, file_path: str | Path) -> Path:
+        import json
+
+        with open(file_path, "w") as f:
+            json.dump(self.dict(), f)
+        return file_path
+
+    @classmethod
+    def from_json_file(cls, file_path: str | Path) -> "Evaluator":
+        import json
+
+        with open(file_path, "r") as f:
+            data = json.load(f)
+        return cls(**data)
 
     @property
     def plot_name(self) -> str:
@@ -433,8 +508,18 @@ class Settings(BaseModel):
     query_ligand_column: str = "Query_Ligand"
     reference_ligand_column: str = "Reference_Ligand"
     reference_structure_column: str = "Reference_Structure"
+    reference_structure_date_column: str = "Reference_Structure_Date"
     pose_id_column: str = "Pose_ID"
-    n_poses: list[int] = [1, 2, 5, 10, 20, 50]
+    n_poses: list[int] = [1]
+    use_date_split: bool = False
+    use_random_split: bool = True
+    randomize_by_n_days: int = 0
+    use_posit_scorer: bool = True
+    posit_score_column_name: str = "docking-confidence-POSIT"
+    posit_name: str = "POSIT_Probability"
+    use_rmsd_scorer: bool = True
+    rmsd_column_name: str = "RMSD"
+    rmsd_name: str = "RMSD"
 
     @classmethod
     def from_yml_file(cls, file_path: Path) -> "Settings":
