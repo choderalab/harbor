@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 class ModelBase(BaseModel):
@@ -389,6 +389,10 @@ def get_class_from_name(name: str):
             return Evaluator
 
 
+# TODO: There might be a better way to do this.
+DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit
+
+
 class Evaluator(ModelBase):
     name: str = "Evaluator"
     type_: str = "Evaluator"
@@ -396,7 +400,7 @@ class Evaluator(ModelBase):
         PoseSelector(name="Default", variable="Pose_ID", number_to_return=1),
         description="How to choose which poses to keep",
     )
-    dataset_split: SplitBase = Field(..., description="Dataset split")
+    dataset_split: DatasetSplitType = Field(..., description="Dataset split")
     structure_choice: StructureChoice = Field(
         StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
         description="How to choose which structures to dock to",
