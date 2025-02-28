@@ -500,7 +500,7 @@ class Results(BaseModel):
 
 
 class Settings(BaseModel):
-    date_dict_path: str = Field(None, description="Path to the date dict")
+    date_dict_path: Optional[str] = Field(None, description="Path to the date dict")
     n_bootstraps: int = 1000
     rmsd_cutoff: float = 2.0
     n_per_split: list[int] = list([1] + list(range(5, 206, 5)))
@@ -520,6 +520,22 @@ class Settings(BaseModel):
     use_rmsd_scorer: bool = True
     rmsd_column_name: str = "RMSD"
     rmsd_name: str = "RMSD"
+
+    @field_validator("date_dict_path", mode="before")
+    def check_date_dict_path(cls, v):
+        if v is None:
+            return None
+        if not Path(v).exists():
+            raise ValueError(f"Path {v} does not exist")
+        return v
+
+    @field_validator("n_per_split", mode="before")
+    def convert_to_list(cls, v):
+        if isinstance(v, int):
+            return [v]
+        elif isinstance(v, np.ndarray):
+            return v.tolist()
+        return v
 
     @classmethod
     def from_yml_file(cls, file_path: Path) -> "Settings":

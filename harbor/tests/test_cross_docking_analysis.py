@@ -7,7 +7,14 @@ from harbor.analysis.cross_docking import (
     Scorer,
     BinaryEvaluation,
     FractionGood,
+    Settings,
 )
+
+
+def test_settings():
+    settings = Settings()
+    settings.to_yml_file("test.yml")
+    s2 = Settings.from_yml_file("test.yml")
 
 
 def test_fraction_good():
