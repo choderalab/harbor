@@ -14,6 +14,10 @@ from harbor.analysis.cross_docking import (
 def test_settings():
     settings = Settings()
     settings.to_yml_file("test.yml")
+
+    import numpy as np
+
+    new_settings = Settings(n_per_split=np.arange(1, 21))
     s2 = Settings.from_yml_file("test.yml")
 
 
