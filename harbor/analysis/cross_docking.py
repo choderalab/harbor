@@ -551,3 +551,6 @@ class Settings(BaseModel):
         with open(file_path, "w") as f:
             yaml.safe_dump(self.dict(), f)
         return file_path
+
+    class Config:
+        validate_assignment = True
