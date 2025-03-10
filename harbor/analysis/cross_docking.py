@@ -191,7 +191,7 @@ class SimilaritySplit(SplitBase):
         return dfs
 
     def get_records(self) -> dict:
-        return {
+        return_dict = {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
             "Split_Variable": self.variable,
@@ -199,6 +199,8 @@ class SimilaritySplit(SplitBase):
             "Include_Similar": self.include_similar,
             "Higher_Is_More_Similar": self.higher_is_more_similar,
         }
+        return_dict.update({key: value for key, value in self.groupby.items()})
+        return return_dict
 
 
 class SorterBase(ModelBase):
