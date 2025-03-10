@@ -507,7 +507,7 @@ class Settings(BaseModel):
     date_dict_path: Optional[str] = Field(None, description="Path to the date dict")
     n_bootstraps: int = 1000
     rmsd_cutoff: float = 2.0
-    n_per_split: list[int] = list([1] + list(range(5, 206, 5)))
+    n_per_split: Optional[list[int]] = None
     n_structures: list[int] = [1, 2, 5, 10]
     query_ligand_column: str = "Query_Ligand"
     reference_ligand_column: str = "Reference_Ligand"
