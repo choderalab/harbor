@@ -182,12 +182,8 @@ class SimilaritySplit(SplitBase):
         # first just get the necessary data
         for key, value in self.groupby.items():
             df = df[df[key] == value]
-        print(df)
         dfs = []
         # this is a bit of a confusing logic gate but if you sort it out it makes sense
-        print(self.variable, self.threshold)
-        print(type(self.threshold))
-        print(df[self.variable])
         if self.include_similar == self.higher_is_more_similar:
             dfs.append(df[df[self.variable] >= self.threshold])
         elif self.include_similar != self.higher_is_more_similar:
