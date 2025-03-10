@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing_extensions import Self
 import abc
 import pandas as pd
 import numpy as np
@@ -159,6 +160,10 @@ class SimilaritySplit(SplitBase):
 
     name: str = "SimilaritySplit"
     type_: str = "SimilaritySplit"
+    groupby: dict = Field(
+        ...,
+        description="Column name : value pairs to group the Tanimoto similarity data by.",
+    )
     threshold: float = Field(
         0.5,
         description="Threshold to use to determine if two structures are similar enough to be in the same split",
@@ -173,8 +178,16 @@ class SimilaritySplit(SplitBase):
     deterministic: bool = True
 
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+
+        # first just get the necessary data
+        for key, value in self.groupby.items():
+            df = df[df[key] == value]
+        print(df)
         dfs = []
         # this is a bit of a confusing logic gate but if you sort it out it makes sense
+        print(self.variable, self.threshold)
+        print(type(self.threshold))
+        print(df[self.variable])
         if self.include_similar == self.higher_is_more_similar:
             dfs.append(df[df[self.variable] >= self.threshold])
         elif self.include_similar != self.higher_is_more_similar:
@@ -508,7 +521,7 @@ class Settings(BaseModel):
     n_bootstraps: int = 1000
     rmsd_cutoff: float = 2.0
     n_per_split: Optional[list[int]] = None
-    n_structures: list[int] = [1, 2, 5, 10]
+    n_structures: list[int] = [1]
     query_ligand_column: str = "Query_Ligand"
     reference_ligand_column: str = "Reference_Ligand"
     reference_structure_column: str = "Reference_Structure"
@@ -524,6 +537,19 @@ class Settings(BaseModel):
     use_rmsd_scorer: bool = True
     rmsd_column_name: str = "RMSD"
     rmsd_name: str = "RMSD"
+    use_similarity_split: bool = False
+    similarity_column_name: str = None
+    similarity_groupby: dict = {}
+
+    @model_validator(mode="after")
+    def check_valid_settings(
+        self,
+    ) -> Self:
+        if self.use_similarity_split and self.similarity_column_name is None:
+            raise ValueError(
+                "Similarity column name must be provided if using similarity split"
+            )
+        return self
 
     @field_validator("date_dict_path", mode="before")
     def check_date_dict_path(cls, v):
