@@ -291,9 +291,11 @@ class FractionGood(ModelBase):
             # use beta function to get CIs
             from scipy.stats import beta
 
-            ci_upper = beta(
-                self.fraction * self.total + 1, (1 - self.fraction) * self.total + 1
-            ).interval(0.95)[1]
+            n_successes = self.fraction * self.total
+            n_failures = (1 - self.fraction) * self.total
+
+            # this is the posterior probability of observing n_successes and n_failures
+            ci_upper = beta(n_successes + 1, n_failures + 1).interval(0.95)[1]
 
         else:
             # otherwise used bootstrapped results
