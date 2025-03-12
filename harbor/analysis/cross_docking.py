@@ -203,6 +203,51 @@ class SimilaritySplit(SplitBase):
         return return_dict
 
 
+class ScaffoldSplit(SplitBase):
+    """
+    Splits the structures available to dock to by whether they share a scaffold with the query ligand
+    "Variable" is the column name for the similarity between the query and reference ligands
+    """
+
+    name: str = "ScaffoldSplit"
+    type_: str = "ScaffoldSplit"
+    groupby: dict = Field(
+        ...,
+        description="Column name : value pairs to group the Tanimoto similarity data by.",
+    )
+    threshold: float = Field(
+        0.5,
+        description="Threshold to use to determine if two structures are similar enough to be in the same split",
+    )
+    higher_is_more_similar: bool = Field(
+        True, description="Higher values are more similar"
+    )
+    include_similar: bool = Field(
+        True,
+        description="If True, include structures that are more similar than the threshold. Otherwise, include structures that are less similar.",
+    )
+    deterministic: bool = False
+
+    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+
+        # first just get the necessary data
+        for key, value in self.groupby.items():
+            df = df[df[key] == value]
+        dfs = []
+
+    def get_records(self) -> dict:
+        return_dict = {
+            "Split": self.name,
+            "N_Per_Split": self.n_per_split,
+            "Split_Variable": self.variable,
+            "Similarity_Threshold": self.threshold,
+            "Include_Similar": self.include_similar,
+            "Higher_Is_More_Similar": self.higher_is_more_similar,
+        }
+        return_dict.update({key: value for key, value in self.groupby.items()})
+        return return_dict
+
+
 class SorterBase(ModelBase):
     type_: str = "SorterBase"
     name: str = Field(..., description="Name of sorting method")
@@ -530,7 +575,7 @@ class Settings(BaseModel):
     n_poses: list[int] = [1]
     use_date_split: bool = False
     use_random_split: bool = True
-    randomize_by_n_days: int = 0
+    randomize_by_n_days: int = 1
     use_posit_scorer: bool = True
     posit_score_column_name: str = "docking-confidence-POSIT"
     posit_name: str = "POSIT_Probability"
