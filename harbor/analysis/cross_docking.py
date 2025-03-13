@@ -35,6 +35,10 @@ class SplitBase(ModelBase):
         False,
         description="Whether the split is deterministic, i.e. if True it should not be run in the bootstrapping loop.",
     )
+    split_level: int = Field(
+        0,
+        description="Level of the split, 0 indexed. The first level is applied first, and so on.",
+    )
 
     @abc.abstractmethod
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
@@ -45,10 +49,16 @@ class SplitBase(ModelBase):
         return f"{self.name}_{self.n_per_split}"
 
     def get_records(self) -> dict:
-        return {
-            "Split": self.name,
-            "N_Per_Split": self.n_per_split,
-        }
+        if self.split_level == 0:
+            return self._get_records()
+        else:
+            return {
+                f"{k}_{self.split_level}": v for k, v in self._get_records().items()
+            }
+
+    @abc.abstractmethod
+    def _get_records(self) -> dict:
+        pass
 
 
 class ReferenceStructureSplitBase(SplitBase):
@@ -64,7 +74,7 @@ class ReferenceStructureSplitBase(SplitBase):
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
         pass
 
-    def get_records(self) -> dict:
+    def _get_records(self) -> dict:
         return {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
@@ -236,7 +246,7 @@ class SimilaritySplit(SplitBase):
         df = df.groupby(self.query_ligand_column).head(self.n_per_split)
         return [df]
 
-    def get_records(self) -> dict:
+    def _get_records(self) -> dict:
         return_dict = {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
@@ -386,7 +396,7 @@ class ScaffoldSplit(SplitBase):
 
         return dfs
 
-    def get_records(self) -> dict:
+    def _get_records(self) -> dict:
         return_dict = {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
@@ -397,6 +407,10 @@ class ScaffoldSplit(SplitBase):
             "Reference_Scaffold_ID_Subset": self.reference_scaffold_id_subset,
         }
         return return_dict
+
+
+# TODO: There might be a better way to do this.
+DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit
 
 
 class SorterBase(ModelBase):
@@ -449,15 +463,18 @@ class Scorer(SorterBase):
     type_: str = "Scorer"
 
 
-POSITScorer = Scorer(
-    name="POSIT",
-    variable="docking-confidence-POSIT",
-    higher_is_better=True,
-    number_to_return=1,
-)
-RMSDScorer = Scorer(
-    name="RMSD", variable="RMSD", higher_is_better=False, number_to_return=1
-)
+class POSITScorer(Scorer):
+    name: str = "POSIT"
+    variable: str = "docking-confidence-POSIT"
+    higher_is_better: bool = True
+    number_to_return: int = 1
+
+
+class RMSDScorer(Scorer):
+    name: str = "RMSD"
+    variable: str = "RMSD"
+    higher_is_better: bool = False
+    number_to_return: int = 1
 
 
 class PoseSelector(SorterBase):
@@ -595,6 +612,8 @@ def get_class_from_name(name: str):
             return DateSplit
         case "SimilaritySplit":
             return SimilaritySplit
+        case "ScaffoldSplit":
+            return ScaffoldSplit
         case "StructureChoice":
             return StructureChoice
         case "Scorer":
@@ -609,10 +628,6 @@ def get_class_from_name(name: str):
             return Evaluator
 
 
-# TODO: There might be a better way to do this.
-DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit
-
-
 class Evaluator(ModelBase):
     name: str = "Evaluator"
     type_: str = "Evaluator"
@@ -621,6 +636,9 @@ class Evaluator(ModelBase):
         description="How to choose which poses to keep",
     )
     dataset_split: DatasetSplitType = Field(..., description="Dataset split")
+    extra_splits: Optional[list[DatasetSplitType]] = Field(
+        [None], description="Additional dataset split"
+    )
     structure_choice: StructureChoice = Field(
         StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
         description="How to choose which structures to dock to",
@@ -637,6 +655,9 @@ class Evaluator(ModelBase):
         results = []
         for i in range(self.n_bootstraps):
             split1 = self.dataset_split.run(df)[0]
+            if self.extra_splits:
+                for split in self.extra_splits:
+                    split1 = split.run(split1)[0]
             subset_df = self.structure_choice.run(split1, groupby=self.groupby)
             subset_df = self.scorer.run(subset_df, groupby=self.groupby)
             results.append(self.evaluator.run(subset_df, groupby=self.groupby))
@@ -658,6 +679,14 @@ class Evaluator(ModelBase):
             return get_class_from_name(v["type_"])(**v)
         else:
             return v
+
+    @model_validator(mode="after")
+    def update_split_level(self) -> Self:
+        self.dataset_split.split_level = 0
+        if self.extra_splits:
+            for level, split in enumerate(self.extra_splits, start=1):
+                split.split_level = level
+        return self
 
     def to_json_file(self, file_path: str | Path) -> Path:
         import json
@@ -693,6 +722,9 @@ class Evaluator(ModelBase):
             self.pose_selector,
         ]:
             mydict.update(container.get_records())
+        if self.extra_splits:
+            for split in self.extra_splits:
+                mydict.update(split.get_records())
         return mydict
 
 
@@ -744,15 +776,17 @@ class Settings(BaseModel):
     use_rmsd_scorer: bool = True
     rmsd_column_name: str = "RMSD"
     rmsd_name: str = "RMSD"
+
     use_similarity_split: bool = False
-    similarity_column_name: str = None
+    similarity_column_name: Optional[str] = None
     similarity_groupby: dict = {}
     similarity_range: list[int] = [0, 1]
     similarity_n_thresholds: int = 21
+
     use_scaffold_split: bool = False
     query_scaffold_id_column: str = "cluster_id"
     reference_scaffold_id_column: str = "cluster_id_Reference"
-    scaffold_split_option: str = ScaffoldSplitOptions.X_TO_X
+    scaffold_split_option: ScaffoldSplitOptions = ScaffoldSplitOptions.X_TO_X
     query_scaffold_id_subset: Optional[list[int]] = None
     reference_scaffold_id_subset: Optional[list[int]] = None
     query_scaffold_min_count: Optional[int] = None
@@ -801,10 +835,11 @@ class Settings(BaseModel):
         )
 
     def to_yml_file(self, file_path: Path) -> Path:
+        import json
         import yaml
 
         with open(file_path, "w") as f:
-            yaml.safe_dump(self.dict(), f)
+            yaml.safe_dump(json.loads(self.model_dump_json()), f)
         return file_path
 
     class Config:
