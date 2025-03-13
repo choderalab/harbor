@@ -40,7 +40,7 @@ def test_fraction_good():
 
 def test_date_split():
     ds = DateSplit(
-        variable="help",
+        reference_structure_column="help",
         n_per_split=100,
         date_dict={"s1": "2021-01-01"},
         randomize_by_n_days=1,
@@ -52,7 +52,7 @@ def test_serialization():
         pose_selector=PoseSelector(
             name="Default", variable="Pose_ID", number_to_return=1
         ),
-        dataset_split=RandomSplit(variable="help", n_per_split=100),
+        dataset_split=RandomSplit(reference_structure_column="help", n_per_split=100),
         scorer=Scorer(
             name="RMSD", variable="RMSD", higher_is_better=False, number_to_return=1
         ),
@@ -68,7 +68,7 @@ def test_serialization():
             name="Default", variable="Pose_ID", number_to_return=1
         ),
         dataset_split=DateSplit(
-            variable="help",
+            reference_structure_column="help",
             n_per_split=100,
             date_dict={"s1": "2021-01-01"},
             randomize_by_n_days=1,
