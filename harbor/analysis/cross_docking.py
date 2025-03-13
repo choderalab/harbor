@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
+from enum import StrEnum, auto
 from typing_extensions import Self
 import abc
 import pandas as pd
@@ -6,6 +7,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 from typing import Optional, Union
+from datetime import datetime, timedelta
 
 
 class ModelBase(BaseModel):
@@ -27,7 +29,6 @@ class SplitBase(ModelBase):
 
     name: str = "SplitBase"
     type_: str = "SplitBase"
-    variable: str = Field(description="Name of variable used to split the data")
     n_splits: int = Field(1, description="number of splits to generate")
     n_per_split: int = Field(..., description="Number of values per split to generate")
     deterministic: bool = Field(
@@ -47,11 +48,31 @@ class SplitBase(ModelBase):
         return {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
-            "Split_Variable": self.variable,
         }
 
 
-class RandomSplit(SplitBase):
+class ReferenceStructureSplitBase(SplitBase):
+    """
+    Base class for splitting the data based on some attributes of the reference structure
+    """
+
+    reference_structure_column: str = Field(
+        ..., description="Name of the column to distinguish reference structures by"
+    )
+
+    @abc.abstractmethod
+    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+        pass
+
+    def get_records(self) -> dict:
+        return {
+            "Split": self.name,
+            "N_Per_Split": self.n_per_split,
+            "Reference_Structure_Column": self.reference_structure_column,
+        }
+
+
+class RandomSplit(ReferenceStructureSplitBase):
     """
     Randomly split the structures into n_splits
     """
@@ -62,7 +83,7 @@ class RandomSplit(SplitBase):
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
         from random import shuffle
 
-        variable_list = df[self.variable].unique()
+        variable_list = df[self.reference_structure_column].unique()
         shuffle(variable_list)
 
         variable_splits = []
@@ -71,15 +92,22 @@ class RandomSplit(SplitBase):
             start = i * self.n_per_split
             end = i * self.n_per_split + self.n_per_split
             variable_splits.append(variable_list[start:end])
-            dfs.append(df[df[self.variable].isin(variable_list[start:end])])
+            dfs.append(
+                df[df[self.reference_structure_column].isin(variable_list[start:end])]
+            )
         return dfs
 
 
-from datetime import datetime, timedelta
-
-
 ## write a function that takes a structure and returns a random structure within timedelta from it
-def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)):
+def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)) -> str:
+    """
+    Get a random structure within timedelta of the input structure.
+
+    :param structure:
+    :param date_dict:
+    :param timedelta:
+    :return:
+    """
     date = date_dict[structure]
     date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
     start_date = date - timedelta
@@ -92,7 +120,7 @@ def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)):
     return np.random.choice(possible_structures)
 
 
-class DateSplit(SplitBase):
+class DateSplit(ReferenceStructureSplitBase):
     """
     Splits the data by date
     """
@@ -148,21 +176,28 @@ class DateSplit(SplitBase):
             else:
                 variable_split = structure_list[start:end]
             variable_splits.append(variable_split)
-            dfs.append(df[df[self.variable].isin(variable_split)])
+            dfs.append(df[df[self.reference_structure_column].isin(variable_split)])
         return dfs
 
 
 class SimilaritySplit(SplitBase):
     """
     Splits the structures available to dock to by similarity to the query ligand
-    "Variable" is the column name for the similarity between the query and reference ligands
     """
 
     name: str = "SimilaritySplit"
     type_: str = "SimilaritySplit"
+    similarity_column: str = Field(
+        ...,
+        description="Column name for the similarity between the query and reference ligands",
+    )
     groupby: dict = Field(
         ...,
         description="Column name : value pairs to group the Tanimoto similarity data by.",
+    )
+    query_ligand_column: str = Field(
+        ...,
+        description="Column name for the query ligand ID in order to pick the top N structures to dock to",
     )
     threshold: float = Field(
         0.5,
@@ -177,24 +212,35 @@ class SimilaritySplit(SplitBase):
     )
     deterministic: bool = True
 
+    @model_validator(mode="after")
+    def validate_model(self) -> Self:
+        if self.n_per_split != -1:
+            self.deterministic = False
+        return self
+
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
 
         # first just get the necessary data
         for key, value in self.groupby.items():
             df = df[df[key] == value]
-        dfs = []
-        # this is a bit of a confusing logic gate but if you sort it out it makes sense
+
+        # if include similar True and higher is MORE similar, or if similar False and higher is LESS similar
         if self.include_similar == self.higher_is_more_similar:
-            dfs.append(df[df[self.variable] >= self.threshold])
+            df = df[df[self.similarity_column] >= self.threshold]
+
+        # if include similar True and higher is LESS similar, or if similar False and higher is MORE similar
         elif self.include_similar != self.higher_is_more_similar:
-            dfs.append(df[df[self.variable] <= self.threshold])
-        return dfs
+            df = df[df[self.similarity_column] <= self.threshold]
+
+        # finally, group by the query ligand column and randomly sample from the top N structures
+        df = df.groupby(self.query_ligand_column).head(self.n_per_split)
+        return [df]
 
     def get_records(self) -> dict:
         return_dict = {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
-            "Split_Variable": self.variable,
+            "Split_Variable": self.similarity_column,
             "Similarity_Threshold": self.threshold,
             "Include_Similar": self.include_similar,
             "Higher_Is_More_Similar": self.higher_is_more_similar,
@@ -203,48 +249,153 @@ class SimilaritySplit(SplitBase):
         return return_dict
 
 
+class ScaffoldSplitOptions(StrEnum):
+    """
+    Options for how to split the structures by scaffold.
+    If a datasets has scaffolds A-F,
+    there are basically four comparisons that are interesting.
+    The first three are easy to do in parallel in my setup,
+    the last one requires that you set up separate evaluators for each combination of scaffolds.
+
+    """
+
+    X_TO_X = auto()  # , "Dock X to X for X in [all your scaffolds]")
+    X_TO_NOT_X = auto()  # , "Dock X to NOT X for X in [all your scaffolds]")
+    NOT_X_TO_X = auto()  # , "Dock NOT X to X for X in [all your scaffolds]")
+    X_TO_Y = (
+        auto()
+    )  # ,"Dock X to Y for X, Y in zip([all your scaffolds], [all your scaffolds]",)
+
+
 class ScaffoldSplit(SplitBase):
     """
-    Splits the structures available to dock to by whether they share a scaffold with the query ligand
-    "Variable" is the column name for the similarity between the query and reference ligands
+    Splits the structures available to dock to by whether they share a scaffold with the query ligand.
     """
 
     name: str = "ScaffoldSplit"
     type_: str = "ScaffoldSplit"
-    groupby: dict = Field(
-        ...,
-        description="Column name : value pairs to group the Tanimoto similarity data by.",
+    query_scaffold_id_column: str = Field(
+        ..., description="Column name for the query scaffold ID"
     )
-    threshold: float = Field(
-        0.5,
-        description="Threshold to use to determine if two structures are similar enough to be in the same split",
+    reference_scaffold_id_column: str = Field(
+        ..., description="Column name for the reference scaffold ID"
     )
-    higher_is_more_similar: bool = Field(
-        True, description="Higher values are more similar"
+    query_scaffold_id_subset: Optional[list[int]] = Field(
+        None,
+        description="List of query scaffold IDs to consider. If None, consider all scaffolds.",
     )
-    include_similar: bool = Field(
-        True,
-        description="If True, include structures that are more similar than the threshold. Otherwise, include structures that are less similar.",
+    reference_scaffold_id_subset: Optional[list[int]] = Field(
+        None,
+        description="List of reference scaffold IDs to consider. If None, consider all scaffolds.",
     )
-    deterministic: bool = False
+    split_option: ScaffoldSplitOptions = Field(
+        ScaffoldSplitOptions.X_TO_Y,
+        description="How to split the data by scaffold",
+    )
+    deterministic: bool = True
+
+    @model_validator(mode="after")
+    def validate_model(self) -> Self:
+        option = self.split_option
+
+        if option == ScaffoldSplitOptions.NOT_X_TO_X:
+            if (
+                not self.reference_scaffold_id_subset
+                or len(self.reference_scaffold_id_subset) != 1
+            ):
+                raise ValueError(
+                    f"{option} requires exactly one reference scaffold item"
+                )
+
+        elif option == ScaffoldSplitOptions.X_TO_NOT_X:
+            if (
+                not self.query_scaffold_id_subset
+                or len(self.query_scaffold_id_subset) != 1
+            ):
+                raise ValueError(f"{option} requires exactly one query scaffold item")
+
+        elif option == ScaffoldSplitOptions.X_TO_Y:
+            if (
+                not self.query_scaffold_id_subset
+                or not self.reference_scaffold_id_subset
+                or len(self.query_scaffold_id_subset) != 1
+                or len(self.reference_scaffold_id_subset) != 1
+            ):
+                raise ValueError(
+                    f"{option} requires exactly one item in both query and reference scaffolds"
+                )
+
+        # if both subsets are length 1 and are the same,
+        # and the split option is not X_TO_X, there won't be any data to analyze
+        if (
+            not self.query_scaffold_id_subset is None
+            and len(self.query_scaffold_id_subset) == 1
+            and self.query_scaffold_id_subset == self.reference_scaffold_id_subset
+            and self.split_option != ScaffoldSplitOptions.X_TO_X
+        ):
+            raise Warning(
+                f"Query and reference scaffold IDs are the same ({self.query_scaffold_id_subset[0]}), "
+                f"and there are only one of each, "
+                f"but you haven't picked split_option {ScaffoldSplitOptions.X_TO_X}. "
+                f"This means there's no data to analyze."
+            )
+
+        return self
 
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
 
-        # first just get the necessary data
-        for key, value in self.groupby.items():
-            df = df[df[key] == value]
         dfs = []
+
+        # first, filter by the query scaffold ID
+        if self.query_scaffold_id_subset is not None:
+            df = df[
+                df[self.query_scaffold_id_column].isin(self.query_scaffold_id_subset)
+            ]
+
+        # then, filter by the reference scaffold ID
+        if self.reference_scaffold_id_subset is not None:
+            df = df[
+                df[self.reference_scaffold_id_column].isin(
+                    self.reference_scaffold_id_subset
+                )
+            ]
+
+        split_option = self.split_option
+        if split_option == ScaffoldSplitOptions.X_TO_X:
+            df = df[
+                df[self.query_scaffold_id_column]
+                == df[self.reference_scaffold_id_column]
+            ]
+            dfs.append(df)
+
+        elif (
+            split_option == ScaffoldSplitOptions.NOT_X_TO_X
+            or split_option == ScaffoldSplitOptions.X_TO_NOT_X
+        ):
+            df = df[
+                df[self.query_scaffold_id_column]
+                != df[self.reference_scaffold_id_column]
+            ]
+            dfs.append(df)
+
+        elif split_option == ScaffoldSplitOptions.X_TO_Y:
+            # we already did the necessary work up top!
+            dfs.append(df)
+        else:
+            raise NotImplementedError(f"Split option {split_option} not implemented")
+
+        return dfs
 
     def get_records(self) -> dict:
         return_dict = {
             "Split": self.name,
             "N_Per_Split": self.n_per_split,
-            "Split_Variable": self.variable,
-            "Similarity_Threshold": self.threshold,
-            "Include_Similar": self.include_similar,
-            "Higher_Is_More_Similar": self.higher_is_more_similar,
+            "Query_Scaffold_ID_Column": self.query_scaffold_id_column,
+            "Reference_Scaffold_ID_Column": self.reference_scaffold_id_column,
+            "Split_Option": self.split_option,
+            "Query_Scaffold_ID_Subset": self.query_scaffold_id_subset,
+            "Reference_Scaffold_ID_Subset": self.reference_scaffold_id_subset,
         }
-        return_dict.update({key: value for key, value in self.groupby.items()})
         return return_dict
 
 
@@ -296,6 +447,17 @@ class StructureChoice(SorterBase):
 class Scorer(SorterBase):
     category: str = "Score"
     type_: str = "Scorer"
+
+
+POSITScorer = Scorer(
+    name="POSIT",
+    variable="docking-confidence-POSIT",
+    higher_is_better=True,
+    number_to_return=1,
+)
+RMSDScorer = Scorer(
+    name="RMSD", variable="RMSD", higher_is_better=False, number_to_return=1
+)
 
 
 class PoseSelector(SorterBase):
@@ -448,7 +610,7 @@ def get_class_from_name(name: str):
 
 
 # TODO: There might be a better way to do this.
-DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit
+DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit
 
 
 class Evaluator(ModelBase):
@@ -585,6 +747,7 @@ class Settings(BaseModel):
     use_similarity_split: bool = False
     similarity_column_name: str = None
     similarity_groupby: dict = {}
+    similarity_thresholds: list[float] = np.linspace(0, 1, 21)
 
     @model_validator(mode="after")
     def check_valid_settings(
