@@ -749,7 +749,7 @@ class Settings(BaseModel):
     use_similarity_split: bool = False
     similarity_column_name: str = None
     similarity_groupby: dict = {}
-    similarity_thresholds: list[float] = np.linspace(0, 1, 21)
+    similarity_thresholds: list[float] = list(np.linspace(0, 1, 21))
 
     @model_validator(mode="after")
     def check_valid_settings(
