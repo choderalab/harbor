@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from enum import Flag, auto
+from enum import Enum, auto
 from typing_extensions import Self
 import abc
 import pandas as pd
@@ -249,7 +249,7 @@ class SimilaritySplit(SplitBase):
         return return_dict
 
 
-class ScaffoldSplitOptions(Flag):
+class ScaffoldSplitOptions(Enum):
     """
     Options for how to split the structures by scaffold.
     If a datasets has scaffolds A-F,
@@ -259,12 +259,10 @@ class ScaffoldSplitOptions(Flag):
 
     """
 
-    X_TO_X = auto()  # , "Dock X to X for X in [all your scaffolds]")
-    X_TO_NOT_X = auto()  # , "Dock X to NOT X for X in [all your scaffolds]")
-    NOT_X_TO_X = auto()  # , "Dock NOT X to X for X in [all your scaffolds]")
-    X_TO_Y = (
-        auto()
-    )  # ,"Dock X to Y for X, Y in zip([all your scaffolds], [all your scaffolds]",)
+    X_TO_X = "x_to_x"  # , "Dock X to X for X in [all your scaffolds]")
+    X_TO_NOT_X = "x_to_not_x"  # , "Dock X to NOT X for X in [all your scaffolds]")
+    NOT_X_TO_X = "not_x_to_x"  # , "Dock NOT X to X for X in [all your scaffolds]")
+    X_TO_Y = "x_to_y"  # ,"Dock X to Y for X, Y in zip([all your scaffolds], [all your scaffolds]",)
 
 
 class ScaffoldSplit(SplitBase):
@@ -370,10 +368,10 @@ class ScaffoldSplit(SplitBase):
             ]
             dfs.append(df)
 
-        elif (
-            split_option
-            in ScaffoldSplitOptions.NOT_X_TO_X | ScaffoldSplitOptions.X_TO_NOT_X
-        ):
+        elif split_option in [
+            ScaffoldSplitOptions.NOT_X_TO_X,
+            ScaffoldSplitOptions.X_TO_NOT_X,
+        ]:
             df = df[
                 df[self.query_scaffold_id_column]
                 != df[self.reference_scaffold_id_column]
@@ -751,6 +749,14 @@ class Settings(BaseModel):
     similarity_groupby: dict = {}
     similarity_range: list[int] = [0, 1]
     similarity_n_thresholds: int = 21
+    use_scaffold_split: bool = False
+    query_scaffold_id_column: str = "cluster_id"
+    reference_scaffold_id_column: str = "cluster_id_Reference"
+    scaffold_split_option: str = ScaffoldSplitOptions.X_TO_X
+    query_scaffold_id_subset: Optional[list[int]] = None
+    reference_scaffold_id_subset: Optional[list[int]] = None
+    query_scaffold_min_count: Optional[int] = None
+    reference_scaffold_min_count: Optional[int] = None
 
     @model_validator(mode="after")
     def check_valid_settings(
