@@ -749,7 +749,8 @@ class Settings(BaseModel):
     use_similarity_split: bool = False
     similarity_column_name: str = None
     similarity_groupby: dict = {}
-    similarity_thresholds: list[float] = list(np.linspace(0, 1, 21))
+    similarity_range: list[int] = [0, 1]
+    similarity_n_thresholds: int = 21
 
     @model_validator(mode="after")
     def check_valid_settings(
@@ -784,6 +785,14 @@ class Settings(BaseModel):
         with open(file_path, "r") as f:
             data = yaml.safe_load(f)
         return cls(**data)
+
+    @property
+    def similarity_thresholds(self) -> np.ndarray:
+        return np.linspace(
+            self.similarity_range[0],
+            self.similarity_range[1],
+            self.similarity_n_thresholds,
+        )
 
     def to_yml_file(self, file_path: Path) -> Path:
         import yaml
