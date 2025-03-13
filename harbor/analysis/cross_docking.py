@@ -694,7 +694,7 @@ class Evaluator(ModelBase):
         import json
 
         with open(file_path, "w") as f:
-            json.dump(self.dict(), f)
+            f.write(self.model_dump_json())
         return file_path
 
     @classmethod
