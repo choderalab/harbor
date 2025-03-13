@@ -637,7 +637,7 @@ class Evaluator(ModelBase):
     )
     dataset_split: DatasetSplitType = Field(..., description="Dataset split")
     extra_splits: Optional[list[DatasetSplitType]] = Field(
-        [None], description="Additional dataset split"
+        None, description="Additional dataset split"
     )
     structure_choice: StructureChoice = Field(
         StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
@@ -657,7 +657,8 @@ class Evaluator(ModelBase):
             split1 = self.dataset_split.run(df)[0]
             if self.extra_splits:
                 for split in self.extra_splits:
-                    split1 = split.run(split1)[0]
+                    if split is not None:
+                        split1 = split.run(split1)[0]
             subset_df = self.structure_choice.run(split1, groupby=self.groupby)
             subset_df = self.scorer.run(subset_df, groupby=self.groupby)
             results.append(self.evaluator.run(subset_df, groupby=self.groupby))
@@ -685,7 +686,8 @@ class Evaluator(ModelBase):
         self.dataset_split.split_level = 0
         if self.extra_splits:
             for level, split in enumerate(self.extra_splits, start=1):
-                split.split_level = level
+                if split is not None:
+                    split.split_level = level
         return self
 
     def to_json_file(self, file_path: str | Path) -> Path:
