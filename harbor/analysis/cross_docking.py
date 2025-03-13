@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from enum import StrEnum, auto
+from enum import Flag, auto
 from typing_extensions import Self
 import abc
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 from datetime import datetime, timedelta
 
 
@@ -249,7 +249,7 @@ class SimilaritySplit(SplitBase):
         return return_dict
 
 
-class ScaffoldSplitOptions(StrEnum):
+class ScaffoldSplitOptions(Flag):
     """
     Options for how to split the structures by scaffold.
     If a datasets has scaffolds A-F,
@@ -304,7 +304,7 @@ class ScaffoldSplit(SplitBase):
                 or len(self.reference_scaffold_id_subset) != 1
             ):
                 raise ValueError(
-                    f"{option} requires exactly one reference scaffold item"
+                    f"{option} requires exactly one item in reference_scaffold_id_subset"
                 )
 
         elif option == ScaffoldSplitOptions.X_TO_NOT_X:
@@ -312,7 +312,9 @@ class ScaffoldSplit(SplitBase):
                 not self.query_scaffold_id_subset
                 or len(self.query_scaffold_id_subset) != 1
             ):
-                raise ValueError(f"{option} requires exactly one query scaffold item")
+                raise ValueError(
+                    f"{option} requires exactly one item in query_scaffold_id_subset"
+                )
 
         elif option == ScaffoldSplitOptions.X_TO_Y:
             if (
@@ -322,7 +324,7 @@ class ScaffoldSplit(SplitBase):
                 or len(self.reference_scaffold_id_subset) != 1
             ):
                 raise ValueError(
-                    f"{option} requires exactly one item in both query and reference scaffolds"
+                    f"{option} requires exactly one item in both query_ and reference_scaffold_id_subset"
                 )
 
         # if both subsets are length 1 and are the same,
@@ -369,8 +371,8 @@ class ScaffoldSplit(SplitBase):
             dfs.append(df)
 
         elif (
-            split_option == ScaffoldSplitOptions.NOT_X_TO_X
-            or split_option == ScaffoldSplitOptions.X_TO_NOT_X
+            split_option
+            in ScaffoldSplitOptions.NOT_X_TO_X | ScaffoldSplitOptions.X_TO_NOT_X
         ):
             df = df[
                 df[self.query_scaffold_id_column]
