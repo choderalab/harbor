@@ -10,6 +10,8 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
+import json
+import yaml
 
 
 class ModelBase(BaseModel):
@@ -760,15 +762,36 @@ class Results(BaseModel):
 
 
 class Settings(BaseModel):
-    date_dict_path: Optional[str] = Field(None, description="Path to the date dict")
-    n_bootstraps: int = 1000
-    rmsd_cutoff: float = 2.0
-    n_per_split: Optional[list[int]] = None
-    n_structures: list[int] = [1]
-    query_ligand_column: str = "Query_Ligand"
-    reference_ligand_column: str = "Reference_Ligand"
-    reference_structure_column: str = "Reference_Structure"
-    reference_structure_date_column: str = "Reference_Structure_Date"
+    date_dict_path: Optional[str] = Field(
+        None,
+        description="Path to the dictionary mapping each reference structure id to its deposition date",
+    )
+    n_bootstraps: int = Field(1000, description="Number of bootstrapped samples to run")
+    rmsd_cutoff: float = Field(
+        2.0, description="RMSD cutoff to label the resulting poses as successful"
+    )
+    n_per_split: Optional[list[int]] = Field(
+        None,
+        description="A list of the number of reference structures that will be used in each split",
+    )
+    n_structures: list[int] = Field(
+        [1], description="Number of structures to choose from the dataset split"
+    )
+    query_ligand_column: str = Field(
+        "Query_Ligand", description="Name of the column containing the query ligand id"
+    )
+    reference_ligand_column: str = Field(
+        "Reference_Ligand",
+        description="Name of the column containing the reference ligand id",
+    )
+    reference_structure_column: str = Field(
+        "Reference_Structure",
+        description="Name of the column to distinguish reference structures by",
+    )
+    reference_structure_date_column: str = Field(
+        "Reference_Structure_Date",
+        description="Name of the column where the date of the reference structure deposition is saved",
+    )
     pose_id_column: str = "Pose_ID"
     n_poses: list[int] = [1]
     use_date_split: bool = False
@@ -832,6 +855,10 @@ class Settings(BaseModel):
 
     @property
     def similarity_thresholds(self) -> np.ndarray:
+        """
+        Generate similarity thresholds from the range and number of thresholds
+        :return:
+        """
         return np.linspace(
             self.similarity_range[0],
             self.similarity_range[1],
@@ -839,8 +866,6 @@ class Settings(BaseModel):
         )
 
     def to_yml_file(self, file_path: Path) -> Path:
-        import json
-        import yaml
 
         with open(file_path, "w") as f:
             yaml.safe_dump(json.loads(self.model_dump_json()), f)
