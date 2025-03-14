@@ -1,6 +1,4 @@
-import pytest
-from harbor.schema.data import Dataset
-from harbor.analysis import get_roc_curve, get_roc_curve_with_uncertainty
+from harbor.roc_curves.schema import get_roc_curve, get_roc_curve_with_uncertainty
 import numpy as np
 
 
