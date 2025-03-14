@@ -23,6 +23,13 @@ def test_settings():
     s2 = Settings.from_yml_file("test.yml")
 
 
+def test_create_evaluators_from_settings():
+    settings = Settings.from_yml_file("test.yml")
+    settings.n_per_split = [1]
+    evs = settings.create_evaluators()
+    assert len(evs) == 2
+
+
 def test_fraction_good():
     fg = FractionGood(total=100, fraction=0.5, replicates=[0.5, 0.6, 0.7])
     assert fg.get_records() == {

@@ -1,3 +1,5 @@
+import logging
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum, auto
 from typing_extensions import Self
@@ -846,3 +848,197 @@ class Settings(BaseModel):
 
     class Config:
         validate_assignment = True
+
+    def create_evaluators(
+        self,
+        df: pd.DataFrame = None,
+        logger: logging.Logger = None,
+        update_n_per_split: bool = False,
+    ) -> list[Evaluator]:
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        logger.info("Creating evaluators")
+        if update_n_per_split:
+            if df is None:
+                raise ValueError("Must provide input dataframe to update n_per_split")
+
+        if self.n_per_split is None and not update_n_per_split:
+            raise ValueError(
+                "n_per_split must be set in settings or update_n_per_split must be True"
+            )
+
+        if update_n_per_split:
+            logger.info("Updating n_per_split")
+            n_per_split = np.arange(1, 21)
+            n_per_split = np.concatenate(
+                (
+                    n_per_split,
+                    np.arange(
+                        25,
+                        len(df[self.reference_structure_column].unique()),
+                        20,
+                    ),
+                )
+            )
+            self.n_per_split = n_per_split
+
+        logger.info("Creating pose selectors")
+        pose_selectors = [
+            PoseSelector(
+                name="Default", variable=self.pose_id_column, number_to_return=n
+            )
+            for n in self.n_poses
+        ]
+
+        logger.info("Setting up dataset splits")
+        dataset_splits = []
+        if self.use_random_split:
+            dataset_splits.extend(
+                [
+                    RandomSplit(
+                        reference_structure_column=self.reference_ligand_column,
+                        n_splits=1,
+                        n_per_split=n_per_split,
+                    )
+                    for n_per_split in self.n_per_split
+                ]
+            )
+        if self.use_date_split:
+            if df is None:
+                raise ValueError("Must provide input dataframe to use date split")
+            logger.info("Loading date information")
+            date_dict_list = (
+                df.groupby(self.reference_structure_column)[
+                    [
+                        self.reference_structure_column,
+                        self.reference_structure_date_column,
+                    ]
+                ]
+                .head(1)
+                .to_dict(orient="records")
+            )
+
+            simplified_date_dict = {
+                date_dict[self.reference_structure_column]: date_dict[
+                    self.reference_structure_date_column
+                ]
+                for date_dict in date_dict_list
+            }
+            dataset_splits.extend(
+                [
+                    DateSplit(
+                        reference_structure_column=self.reference_structure_column,
+                        n_per_split=n_per_split,
+                        balanced=True,  # haven't implemented this otherwise
+                        date_dict=simplified_date_dict,
+                        randomize_by_n_days=self.randomize_by_n_days,
+                    )
+                    for n_per_split in self.n_per_split
+                ]
+            )
+        if self.use_similarity_split:
+            dataset_splits.extend(
+                [
+                    SimilaritySplit(
+                        threshold=threshold,
+                        similarity_column=self.similarity_column_name,
+                        groupby=self.similarity_groupby,
+                        n_per_split=n_per_split,
+                        query_ligand_column=self.query_ligand_column,
+                        higher_is_more_similar=True,
+                        include_similar=False,
+                    )
+                    for threshold in self.similarity_thresholds
+                    for n_per_split in self.n_per_split
+                ]
+            )
+        if self.use_scaffold_split:
+
+            # subset can be a list, and we might want to make a list of subsets
+
+            ref_subset_list = [self.reference_scaffold_id_subset]
+            query_subset_list = [self.query_scaffold_id_subset]
+
+            if self.scaffold_split_option == ScaffoldSplitOptions.NOT_X_TO_X:
+                # Get cluster sizes by counting unique ligands per cluster
+                cluster_sizes = df.groupby(self.reference_scaffold_id_column)[
+                    self.reference_ligand_column
+                ].nunique()
+
+                # Filter for clusters with more than 5 members
+                ref_subset_list = [
+                    [scaffold]
+                    for scaffold in cluster_sizes[
+                        cluster_sizes > self.reference_scaffold_min_count
+                    ].index.tolist()
+                ]
+
+            elif self.scaffold_split_option == ScaffoldSplitOptions.X_TO_NOT_X:
+                # Do the same thing but for the query
+                cluster_sizes = df.groupby(self.query_scaffold_id_column)[
+                    self.query_ligand_column
+                ].nunique()
+
+                query_subset_list = [
+                    [scaffold]
+                    for scaffold in cluster_sizes[
+                        cluster_sizes > self.query_scaffold_min_count
+                    ].index.tolist()
+                ]
+
+            dataset_splits.extend(
+                [
+                    ScaffoldSplit(
+                        query_scaffold_id_column=self.query_scaffold_id_column,
+                        reference_scaffold_id_column=self.reference_scaffold_id_column,
+                        split_option=self.scaffold_split_option,
+                        reference_scaffold_id_subset=ref_subset,
+                        query_scaffold_id_subset=query_subset,
+                        n_per_split=n_per_split,
+                    )
+                    for n_per_split in self.n_per_split
+                    for ref_subset in ref_subset_list
+                    for query_subset in query_subset_list
+                ]
+            )
+
+        logger.info("Adding scorers")
+        scorers = []
+        if self.use_posit_scorer:
+            scorers.append(
+                Scorer(
+                    name=self.posit_name,
+                    variable=self.posit_score_column_name,
+                    higher_is_better=True,
+                    number_to_return=1,
+                )
+            )
+        if self.use_rmsd_scorer:
+            scorers.append(
+                Scorer(
+                    name=self.rmsd_name,
+                    variable=self.rmsd_column_name,
+                    higher_is_better=False,
+                    number_to_return=1,
+                )
+            )
+        rmsd_evaluator = BinaryEvaluation(
+            variable=self.rmsd_column_name, cutoff=self.rmsd_cutoff
+        )
+
+        logger.info("Adding evaluators")
+        evaluators = []
+        for pose_selector in pose_selectors:
+            for dataset_split in dataset_splits:
+                for scorer in scorers:
+                    evaluator = Evaluator(
+                        pose_selector=pose_selector,
+                        dataset_split=dataset_split,
+                        scorer=scorer,
+                        evaluator=rmsd_evaluator,
+                        groupby=[self.query_ligand_column],
+                        n_bootstraps=self.n_bootstraps,
+                    )
+                    evaluators.append(evaluator)
+        return evaluators
