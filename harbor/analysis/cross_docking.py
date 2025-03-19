@@ -346,6 +346,12 @@ class ScaffoldSplit(SplitBase):
     )
     deterministic: bool = True
 
+    @field_validator("split_option", mode="before")
+    def convert_to_string(cls, v):
+        if isinstance(v, Enum):
+            return v.value
+        return v
+
     @model_validator(mode="after")
     def validate_model(self) -> Self:
         option = self.split_option
@@ -525,7 +531,7 @@ class Scorer(SorterBase):
 
 
 class POSITScorer(Scorer):
-    name: str = "POSIT"
+    name: str = "POSIT_Probability"
     variable: str = "docking-confidence-POSIT"
     higher_is_better: bool = True
     number_to_return: int = 1
@@ -819,21 +825,8 @@ class Results(BaseModel):
 
 
 class Settings(SettingsBase):
-    date_dict_path: Optional[str] = Field(
-        None,
-        description="Path to the dictionary mapping each reference structure id to its deposition date",
-    )
+    # General Settings
     n_bootstraps: int = Field(1000, description="Number of bootstrapped samples to run")
-    rmsd_cutoff: float = Field(
-        2.0, description="RMSD cutoff to label the resulting poses as successful"
-    )
-    n_per_split: Optional[list[int]] = Field(
-        None,
-        description="A list of the number of reference structures that will be used in each split",
-    )
-    n_structures: list[int] = Field(
-        [1], description="Number of structures to choose from the dataset split"
-    )
     query_ligand_column: str = Field(
         "Query_Ligand", description="Name of the column containing the query ligand id"
     )
@@ -845,43 +838,89 @@ class Settings(SettingsBase):
         "Reference_Structure",
         description="Name of the column to distinguish reference structures by",
     )
+
+    # Pose Selection
+    pose_id_column: str = Field(
+        "Pose_ID", description="Name of the column containing the pose id"
+    )
+    n_poses: list[int] = Field(None, description="Number of poses to select")
+
+    # Dataset Splitting
+    use_random_split: bool = True
+    n_per_split: Optional[list[int]] = Field(
+        None,
+        description="A list of the number of reference structures that will be used in each split",
+    )
+
+    # Date Split
+    use_date_split: bool = False
     reference_structure_date_column: str = Field(
         "Reference_Structure_Date",
         description="Name of the column where the date of the reference structure deposition is saved",
     )
-    pose_id_column: str = "Pose_ID"
-    n_poses: list[int] = [1]
-    use_date_split: bool = False
-    use_random_split: bool = True
     randomize_by_n_days: int = 1
-    use_posit_scorer: bool = True
-    posit_score_column_name: str = "docking-confidence-POSIT"
-    posit_name: str = "POSIT_Probability"
-    use_rmsd_scorer: bool = True
-    rmsd_column_name: str = "RMSD"
-    rmsd_name: str = "RMSD"
 
     # Similarity splitting options
     use_similarity_split: bool = False
-    similarity_column_name: Optional[str] = None
+    similarity_column_name: Optional[str] = Field(
+        None,
+        description="Name of the column containing the similarity value between the query and reference ligands",
+    )
     similarity_groupby: dict = {}
-    similarity_range: list[int] = [0, 1]
-    similarity_n_thresholds: int = 21
+    similarity_range: list[float] = Field(
+        [0, 1],
+        description="Range of values the similarity score can take. Used to generate a standardized set of thresholds",
+    )
+    similarity_n_thresholds: int = Field(21, description="Number of thresholds to use")
 
     # Scaffold splitting options
     use_scaffold_split: bool = False
-    query_scaffold_id_column: str = "cluster_id"
-    reference_scaffold_id_column: str = "cluster_id_Reference"
-    scaffold_split_option: ScaffoldSplitOptions = ScaffoldSplitOptions.X_TO_X
-    query_scaffold_id_subset: Optional[list[int]] = None
-    reference_scaffold_id_subset: Optional[list[int]] = None
-    query_scaffold_min_count: Optional[int] = None
-    reference_scaffold_min_count: Optional[int] = None
+    scaffold_split_option: ScaffoldSplitOptions = Field(
+        ScaffoldSplitOptions.X_TO_X,
+        description=f"How to split the data by scaffold, one of {ScaffoldSplitOptions}",
+    )
+    query_scaffold_id_column: str = Field(
+        "cluster_id", description="Name of the column containing the query scaffold id"
+    )
+    reference_scaffold_id_column: str = Field(
+        "cluster_id_Reference",
+        description="Name of the column containing the reference scaffold id",
+    )
+    query_scaffold_id_subset: Optional[list[int]] = Field(
+        None, description="List of query scaffold IDs to consider"
+    )
+    reference_scaffold_id_subset: Optional[list[int]] = Field(
+        None, description="List of reference scaffold IDs to consider"
+    )
+    query_scaffold_min_count: Optional[int] = Field(
+        5,
+        description="Minimum number of ligands in a query scaffold to consider it for docking",
+    )
+    reference_scaffold_min_count: Optional[int] = Field(
+        1,
+        description="Minimum number of ligands in a reference scaffold to consider it for docking",
+    )
 
-    # General Options
+    # Combine Core and Chemical Splits
     combine_core_and_chemical_splits: bool = Field(
         False,
         description=f"Combine {CoreSplit} and {ChemicalSplit} into single splits",
+    )
+
+    # Scoring Options
+    use_posit_scorer: bool = True
+    posit_score_column_name: str = Field(
+        "docking-confidence-POSIT",
+        description="Name of the column containing the POSIT score",
+    )
+    posit_name: str = Field("POSIT_Probability", description="Name of the POSIT score")
+    use_rmsd_scorer: bool = True
+    rmsd_column_name: str = "RMSD"
+    rmsd_name: str = Field("RMSD", description="Name of the RMSD score")
+
+    # Evaluator Options
+    rmsd_cutoff: float = Field(
+        2.0, description="RMSD cutoff to label the resulting poses as successful"
     )
 
     class Config:
@@ -896,14 +935,6 @@ class Settings(SettingsBase):
                 "Similarity column name must be provided if using similarity split"
             )
         return self
-
-    @field_validator("date_dict_path", mode="before")
-    def check_date_dict_path(cls, v):
-        if v is None:
-            return None
-        if not Path(v).exists():
-            raise ValueError(f"Path {v} does not exist")
-        return v
 
     @field_validator("n_per_split", mode="before")
     def convert_to_list(cls, v):
@@ -934,7 +965,7 @@ class Settings(SettingsBase):
                 n_per_split,
                 np.arange(
                     25,
-                    len(df[self.reference_structure_column].unique()),
+                    len(df[self.reference_structure_column].unique()) + stride,
                     stride,
                 ),
             )
@@ -942,6 +973,8 @@ class Settings(SettingsBase):
         self.n_per_split = n_per_split
 
     def create_pose_selectors(self) -> list[PoseSelector]:
+        if self.n_poses is None:
+            self.n_poses = [1]
         return [
             PoseSelector(
                 name="Default", variable=self.pose_id_column, number_to_return=n
