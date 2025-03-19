@@ -1185,17 +1185,11 @@ class Settings(SettingsBase):
             logger = logging.getLogger(__name__)
 
         logger.info("Creating evaluators")
-        if self.update_n_per_split_from_data:
+        if self.update_n_per_split:
             if df is None:
                 raise ValueError("Must provide input dataframe to update n_per_split")
-
-        if self.n_per_split is None and not self.update_n_per_split_from_data:
-            raise ValueError(
-                "n_per_split must be set in settings or update_n_per_split must be True"
-            )
-
-        if self.update_n_per_split_from_data:
-            self.update_n_per_split_from_data(df)
+            else:
+                self.update_n_per_split_from_data(df)
 
         logger.info("Creating pose selectors")
         pose_selectors = self.create_pose_selectors()
