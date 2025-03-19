@@ -1222,3 +1222,6 @@ class Settings(SettingsBase):
                     evaluators.append(evaluator)
 
         return evaluators
+
+    def df_from_evaluators(cls, evs: list[Evaluator]) -> pd.DataFrame:
+        return pd.DataFrame.from_records([ev.get_records() for ev in evs])
