@@ -847,6 +847,9 @@ class Settings(SettingsBase):
 
     # Dataset Splitting
     use_random_split: bool = True
+    update_n_per_split: bool = Field(
+        True, description="Update n_per_split based on data"
+    )
     n_per_split: Optional[list[int]] = Field(
         None,
         description="A list of the number of reference structures that will be used in each split",
@@ -934,6 +937,10 @@ class Settings(SettingsBase):
             raise ValueError(
                 "Similarity column name must be provided if using similarity split"
             )
+        if self.n_per_split is None and not self.update_n_per_split_from_data:
+            raise ValueError(
+                "n_per_split must be provided if update_n_per_split is False"
+            )
         return self
 
     @field_validator("n_per_split", mode="before")
@@ -956,7 +963,7 @@ class Settings(SettingsBase):
             self.similarity_n_thresholds,
         )
 
-    def update_n_per_split(
+    def update_n_per_split_from_data(
         self, df: pd.DataFrame, initial_range: list = (1, 21), stride=20
     ) -> None:
         n_per_split = np.arange(*initial_range)
@@ -1173,23 +1180,22 @@ class Settings(SettingsBase):
         self,
         df: pd.DataFrame = None,
         logger: logging.Logger = None,
-        update_n_per_split: bool = False,
     ) -> list[Evaluator]:
         if logger is None:
             logger = logging.getLogger(__name__)
 
         logger.info("Creating evaluators")
-        if update_n_per_split:
+        if self.update_n_per_split_from_data:
             if df is None:
                 raise ValueError("Must provide input dataframe to update n_per_split")
 
-        if self.n_per_split is None and not update_n_per_split:
+        if self.n_per_split is None and not self.update_n_per_split_from_data:
             raise ValueError(
                 "n_per_split must be set in settings or update_n_per_split must be True"
             )
 
-        if update_n_per_split:
-            self.update_n_per_split(df)
+        if self.update_n_per_split_from_data:
+            self.update_n_per_split_from_data(df)
 
         logger.info("Creating pose selectors")
         pose_selectors = self.create_pose_selectors()
