@@ -26,6 +26,43 @@ class ModelBase(BaseModel):
         pass
 
 
+class SettingsBase(BaseModel):
+    def get_descriptions(self) -> dict:
+        schema = self.model_json_schema()
+        return {
+            field: field_info.get("description", "")
+            for field, field_info in schema["properties"].items()
+        }
+
+    def to_yaml(self):
+        # Get the model's JSON schema
+        return json.loads(self.model_dump_json())
+
+    def to_yaml_file(self, file_path):
+        # Convert to YAML
+        output = self.to_yaml()
+        descriptions = self.get_descriptions()
+
+        # Write to file with descriptions as a block comment at the top
+        with open(file_path, "w") as file:
+            for key, value in output.items():
+                if key in descriptions:
+                    file.write(f"# {key}: {descriptions[key]}\n")
+
+            # then write out full object
+            yaml.dump(output, file, sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, yaml_str):
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+    @classmethod
+    def from_yaml_file(cls, file_path):
+        with open(file_path, "r") as file:
+            return cls.from_yaml(file.read())
+
+
 class SplitBase(ModelBase):
     """
     Base class for splitting the data (i.e. Random, Dataset, Scaffold, etc)
@@ -136,7 +173,7 @@ def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)) ->
 
 class DateSplit(ReferenceStructureSplitBase):
     """
-    Splits the data by date
+    Splits the data by date.
     """
 
     name: str = "DateSplit"
@@ -159,6 +196,7 @@ class DateSplit(ReferenceStructureSplitBase):
     )
 
     def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+        # sort the structures by date
         dates = np.array(list(self.date_dict.values()))
         structures = np.array(list(self.date_dict.keys()))
         sort_idx = np.argsort(dates)
@@ -277,6 +315,8 @@ class ScaffoldSplitOptions(Enum):
     X_TO_NOT_X = "x_to_not_x"  # , "Dock X to NOT X for X in [all your scaffolds]")
     NOT_X_TO_X = "not_x_to_x"  # , "Dock NOT X to X for X in [all your scaffolds]")
     X_TO_Y = "x_to_y"  # ,"Dock X to Y for X, Y in zip([all your scaffolds], [all your scaffolds]",)
+    X_TO_ALL = "x_to_all"  # Dock X to all data for X in [all your scaffolds]
+    ALL_TO_X = "all_to_x"  # Dock all to X for X in [all your scaffolds]
 
 
 class ScaffoldSplit(SplitBase):
@@ -310,7 +350,10 @@ class ScaffoldSplit(SplitBase):
     def validate_model(self) -> Self:
         option = self.split_option
 
-        if option == ScaffoldSplitOptions.NOT_X_TO_X:
+        if (
+            option == ScaffoldSplitOptions.NOT_X_TO_X
+            or option == ScaffoldSplitOptions.ALL_TO_X
+        ):
             if (
                 not self.reference_scaffold_id_subset
                 or len(self.reference_scaffold_id_subset) != 1
@@ -319,7 +362,10 @@ class ScaffoldSplit(SplitBase):
                     f"{option} requires exactly one item in reference_scaffold_id_subset"
                 )
 
-        elif option == ScaffoldSplitOptions.X_TO_NOT_X:
+        elif (
+            option == ScaffoldSplitOptions.X_TO_NOT_X
+            or option == ScaffoldSplitOptions.X_TO_ALL
+        ):
             if (
                 not self.query_scaffold_id_subset
                 or len(self.query_scaffold_id_subset) != 1
@@ -340,12 +386,17 @@ class ScaffoldSplit(SplitBase):
                 )
 
         # if both subsets are length 1 and are the same,
-        # and the split option is not X_TO_X, there won't be any data to analyze
+        # and the split option is not X_TO_X, X_TO_ALL, or ALL_TO_X, there won't be any data to analyze
         if (
             not self.query_scaffold_id_subset is None
             and len(self.query_scaffold_id_subset) == 1
             and self.query_scaffold_id_subset == self.reference_scaffold_id_subset
-            and self.split_option != ScaffoldSplitOptions.X_TO_X
+            and not self.split_option
+            in [
+                ScaffoldSplitOptions.X_TO_X,
+                ScaffoldSplitOptions.X_TO_ALL,
+                ScaffoldSplitOptions.ALL_TO_X,
+            ]
         ):
             raise Warning(
                 f"Query and reference scaffold IDs are the same ({self.query_scaffold_id_subset[0]}), "
@@ -392,7 +443,11 @@ class ScaffoldSplit(SplitBase):
             ]
             dfs.append(df)
 
-        elif split_option == ScaffoldSplitOptions.X_TO_Y:
+        elif split_option in [
+            ScaffoldSplitOptions.X_TO_Y,
+            ScaffoldSplitOptions.ALL_TO_X,
+            ScaffoldSplitOptions.X_TO_ALL,
+        ]:
             # we already did the necessary work up top!
             dfs.append(df)
         else:
@@ -415,6 +470,8 @@ class ScaffoldSplit(SplitBase):
 
 # TODO: There might be a better way to do this.
 DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit
+CoreSplit = RandomSplit | DateSplit
+ChemicalSplit = SimilaritySplit | ScaffoldSplit
 
 
 class SorterBase(ModelBase):
@@ -641,7 +698,7 @@ class Evaluator(ModelBase):
     )
     dataset_split: DatasetSplitType = Field(..., description="Dataset split")
     extra_splits: Optional[list[DatasetSplitType]] = Field(
-        None, description="Additional dataset split"
+        None, description="Additional dataset splits to be run after the first one"
     )
     structure_choice: StructureChoice = Field(
         StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
@@ -761,7 +818,7 @@ class Results(BaseModel):
         return pd.DataFrame.from_records([result.get_records() for result in results])
 
 
-class Settings(BaseModel):
+class Settings(SettingsBase):
     date_dict_path: Optional[str] = Field(
         None,
         description="Path to the dictionary mapping each reference structure id to its deposition date",
@@ -804,12 +861,14 @@ class Settings(BaseModel):
     rmsd_column_name: str = "RMSD"
     rmsd_name: str = "RMSD"
 
+    # Similarity splitting options
     use_similarity_split: bool = False
     similarity_column_name: Optional[str] = None
     similarity_groupby: dict = {}
     similarity_range: list[int] = [0, 1]
     similarity_n_thresholds: int = 21
 
+    # Scaffold splitting options
     use_scaffold_split: bool = False
     query_scaffold_id_column: str = "cluster_id"
     reference_scaffold_id_column: str = "cluster_id_Reference"
@@ -818,6 +877,15 @@ class Settings(BaseModel):
     reference_scaffold_id_subset: Optional[list[int]] = None
     query_scaffold_min_count: Optional[int] = None
     reference_scaffold_min_count: Optional[int] = None
+
+    # General Options
+    combine_core_and_chemical_splits: bool = Field(
+        False,
+        description=f"Combine {CoreSplit} and {ChemicalSplit} into single splits",
+    )
+
+    class Config:
+        validate_assignment = True
 
     @model_validator(mode="after")
     def check_valid_settings(
@@ -845,14 +913,6 @@ class Settings(BaseModel):
             return v.tolist()
         return v
 
-    @classmethod
-    def from_yml_file(cls, file_path: Path) -> "Settings":
-        import yaml
-
-        with open(file_path, "r") as f:
-            data = yaml.safe_load(f)
-        return cls(**data)
-
     @property
     def similarity_thresholds(self) -> np.ndarray:
         """
@@ -865,59 +925,38 @@ class Settings(BaseModel):
             self.similarity_n_thresholds,
         )
 
-    def to_yml_file(self, file_path: Path) -> Path:
-
-        with open(file_path, "w") as f:
-            yaml.safe_dump(json.loads(self.model_dump_json()), f)
-        return file_path
-
-    class Config:
-        validate_assignment = True
-
-    def create_evaluators(
-        self,
-        df: pd.DataFrame = None,
-        logger: logging.Logger = None,
-        update_n_per_split: bool = False,
-    ) -> list[Evaluator]:
-        if logger is None:
-            logger = logging.getLogger(__name__)
-
-        logger.info("Creating evaluators")
-        if update_n_per_split:
-            if df is None:
-                raise ValueError("Must provide input dataframe to update n_per_split")
-
-        if self.n_per_split is None and not update_n_per_split:
-            raise ValueError(
-                "n_per_split must be set in settings or update_n_per_split must be True"
+    def update_n_per_split(
+        self, df: pd.DataFrame, initial_range: list = (1, 21), stride=20
+    ) -> None:
+        n_per_split = np.arange(*initial_range)
+        n_per_split = np.concatenate(
+            (
+                n_per_split,
+                np.arange(
+                    25,
+                    len(df[self.reference_structure_column].unique()),
+                    stride,
+                ),
             )
+        )
+        self.n_per_split = n_per_split
 
-        if update_n_per_split:
-            logger.info("Updating n_per_split")
-            n_per_split = np.arange(1, 21)
-            n_per_split = np.concatenate(
-                (
-                    n_per_split,
-                    np.arange(
-                        25,
-                        len(df[self.reference_structure_column].unique()),
-                        20,
-                    ),
-                )
-            )
-            self.n_per_split = n_per_split
-
-        logger.info("Creating pose selectors")
-        pose_selectors = [
+    def create_pose_selectors(self) -> list[PoseSelector]:
+        return [
             PoseSelector(
                 name="Default", variable=self.pose_id_column, number_to_return=n
             )
             for n in self.n_poses
         ]
 
-        logger.info("Setting up dataset splits")
+    def create_dataset_splits(
+        self, df: pd.DataFrame = None, combine_core_and_chemical=False
+    ) -> list[DatasetSplitType]:
+        if combine_core_and_chemical:
+            self.combine_core_and_chemical_splits = True
+
         dataset_splits = []
+
         if self.use_random_split:
             dataset_splits.extend(
                 [
@@ -932,7 +971,6 @@ class Settings(BaseModel):
         if self.use_date_split:
             if df is None:
                 raise ValueError("Must provide input dataframe to use date split")
-            logger.info("Loading date information")
             date_dict_list = (
                 df.groupby(self.reference_structure_column)[
                     [
@@ -962,7 +1000,12 @@ class Settings(BaseModel):
                     for n_per_split in self.n_per_split
                 ]
             )
+
         if self.use_similarity_split:
+            if self.combine_core_and_chemical_splits:
+                n_per_splits_to_use = [-1]
+            else:
+                n_per_splits_to_use = self.n_per_split
             dataset_splits.extend(
                 [
                     SimilaritySplit(
@@ -975,17 +1018,24 @@ class Settings(BaseModel):
                         include_similar=False,
                     )
                     for threshold in self.similarity_thresholds
-                    for n_per_split in self.n_per_split
+                    for n_per_split in n_per_splits_to_use
                 ]
             )
         if self.use_scaffold_split:
+            if self.combine_core_and_chemical_splits:
+                n_per_splits_to_use = [-1]
+            else:
+                n_per_splits_to_use = self.n_per_split
 
             # subset can be a list, and we might want to make a list of subsets
 
             ref_subset_list = [self.reference_scaffold_id_subset]
             query_subset_list = [self.query_scaffold_id_subset]
 
-            if self.scaffold_split_option == ScaffoldSplitOptions.NOT_X_TO_X:
+            if self.scaffold_split_option in [
+                ScaffoldSplitOptions.NOT_X_TO_X,
+                ScaffoldSplitOptions.ALL_TO_X,
+            ]:
                 # Get cluster sizes by counting unique ligands per cluster
                 cluster_sizes = df.groupby(self.reference_scaffold_id_column)[
                     self.reference_ligand_column
@@ -999,7 +1049,10 @@ class Settings(BaseModel):
                     ].index.tolist()
                 ]
 
-            elif self.scaffold_split_option == ScaffoldSplitOptions.X_TO_NOT_X:
+            elif self.scaffold_split_option in [
+                ScaffoldSplitOptions.X_TO_NOT_X,
+                ScaffoldSplitOptions.X_TO_ALL,
+            ]:
                 # Do the same thing but for the query
                 cluster_sizes = df.groupby(self.query_scaffold_id_column)[
                     self.query_ligand_column
@@ -1022,13 +1075,43 @@ class Settings(BaseModel):
                         query_scaffold_id_subset=query_subset,
                         n_per_split=n_per_split,
                     )
-                    for n_per_split in self.n_per_split
+                    for n_per_split in n_per_splits_to_use
                     for ref_subset in ref_subset_list
                     for query_subset in query_subset_list
                 ]
             )
+        return dataset_splits
 
-        logger.info("Adding scorers")
+    def combine_splits(
+        self, splits: list[DatasetSplitType]
+    ) -> (list[CoreSplit], list[ChemicalSplit]):
+        """
+        Combine multiple splits into one split
+        :param splits:
+        :return:
+        """
+        from collections import defaultdict
+        from itertools import product
+
+        core_splits = defaultdict(list)
+        chemical_splits = defaultdict(list)
+        for ds in splits:
+            if isinstance(ds, CoreSplit):
+                core_splits[ds.name].append(ds)
+            elif isinstance(ds, ChemicalSplit):
+                chemical_splits[ds.name].append(ds)
+
+        dataset_splits = []
+        extra_splits = []
+        for split1_name, split1s in core_splits.items():
+            for split2_name, split2s in chemical_splits.items():
+                # this is combinatorial, so you better be careful!
+                for s1, s2 in product(split1s, split2s):
+                    dataset_splits.append(s1)
+                    extra_splits.append([s2])
+        return dataset_splits, extra_splits
+
+    def create_scorers(self) -> list[Scorer]:
         scorers = []
         if self.use_posit_scorer:
             scorers.append(
@@ -1048,22 +1131,61 @@ class Settings(BaseModel):
                     number_to_return=1,
                 )
             )
-        rmsd_evaluator = BinaryEvaluation(
-            variable=self.rmsd_column_name, cutoff=self.rmsd_cutoff
-        )
+        return scorers
 
-        logger.info("Adding evaluators")
+    def create_success_metric(self) -> BinaryEvaluation:
+        return BinaryEvaluation(variable=self.rmsd_column_name, cutoff=self.rmsd_cutoff)
+
+    def create_evaluators(
+        self,
+        df: pd.DataFrame = None,
+        logger: logging.Logger = None,
+        update_n_per_split: bool = False,
+    ) -> list[Evaluator]:
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        logger.info("Creating evaluators")
+        if update_n_per_split:
+            if df is None:
+                raise ValueError("Must provide input dataframe to update n_per_split")
+
+        if self.n_per_split is None and not update_n_per_split:
+            raise ValueError(
+                "n_per_split must be set in settings or update_n_per_split must be True"
+            )
+
+        if update_n_per_split:
+            self.update_n_per_split(df)
+
+        logger.info("Creating pose selectors")
+        pose_selectors = self.create_pose_selectors()
+
+        logger.info("Creating dataset splits")
+        dataset_splits = self.create_dataset_splits(df)
+        if self.combine_core_and_chemical_splits:
+            dataset_splits, extra_splits = self.combine_splits(dataset_splits)
+        else:
+            extra_splits = None
+
+        logger.info("Creating scorers")
+        scorers = self.create_scorers()
+        rmsd_evaluator = self.create_success_metric()
+
+        logger.info("Creating evaluators")
         evaluators = []
         for pose_selector in pose_selectors:
-            for dataset_split in dataset_splits:
+            for i, dataset_split in enumerate(dataset_splits):
                 for scorer in scorers:
                     evaluator = Evaluator(
                         pose_selector=pose_selector,
                         dataset_split=dataset_split,
+                        extra_splits=extra_splits[i] if extra_splits else None,
                         scorer=scorer,
                         evaluator=rmsd_evaluator,
                         groupby=[self.query_ligand_column],
                         n_bootstraps=self.n_bootstraps,
                     )
                     evaluators.append(evaluator)
+
         return evaluators
