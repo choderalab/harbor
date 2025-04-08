@@ -393,21 +393,23 @@ class ScaffoldSplit(SplitBase):
 
         # if both subsets are length 1 and are the same,
         # and the split option is not X_TO_X, X_TO_ALL, or ALL_TO_X, there won't be any data to analyze
+        split_options_that_can_have_the_same_query_and_reference = [
+            ScaffoldSplitOptions.X_TO_X,
+            ScaffoldSplitOptions.X_TO_Y,
+            ScaffoldSplitOptions.X_TO_ALL,
+            ScaffoldSplitOptions.ALL_TO_X,
+        ]
         if (
             not self.query_scaffold_id_subset is None
             and len(self.query_scaffold_id_subset) == 1
             and self.query_scaffold_id_subset == self.reference_scaffold_id_subset
             and not self.split_option
-            in [
-                ScaffoldSplitOptions.X_TO_X,
-                ScaffoldSplitOptions.X_TO_ALL,
-                ScaffoldSplitOptions.ALL_TO_X,
-            ]
+            in split_options_that_can_have_the_same_query_and_reference
         ):
             raise Warning(
                 f"Query and reference scaffold IDs are the same ({self.query_scaffold_id_subset[0]}), "
                 f"and there are only one of each, "
-                f"but you haven't picked split_option {ScaffoldSplitOptions.X_TO_X}. "
+                f"but you haven't picked one of these split options: {split_options_that_can_have_the_same_query_and_reference}. "
                 f"This means there's no data to analyze."
             )
 
