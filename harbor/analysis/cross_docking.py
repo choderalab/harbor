@@ -1075,6 +1075,7 @@ class Settings(SettingsBase):
             if self.scaffold_split_option in [
                 ScaffoldSplitOptions.NOT_X_TO_X,
                 ScaffoldSplitOptions.ALL_TO_X,
+                ScaffoldSplitOptions.X_TO_Y,
             ]:
                 # Get cluster sizes by counting unique ligands per cluster
                 cluster_sizes = df.groupby(self.reference_scaffold_id_column)[
@@ -1089,9 +1090,10 @@ class Settings(SettingsBase):
                     ].index.tolist()
                 ]
 
-            elif self.scaffold_split_option in [
+            if self.scaffold_split_option in [
                 ScaffoldSplitOptions.X_TO_NOT_X,
                 ScaffoldSplitOptions.X_TO_ALL,
+                ScaffoldSplitOptions.X_TO_Y,
             ]:
                 # Do the same thing but for the query
                 cluster_sizes = df.groupby(self.query_scaffold_id_column)[
@@ -1104,6 +1106,16 @@ class Settings(SettingsBase):
                         cluster_sizes > self.query_scaffold_min_count
                     ].index.tolist()
                 ]
+            if self.scaffold_split_option in [ScaffoldSplitOptions.X_TO_Y]:
+                # let's make the subsets the union of both, removing duplicates
+                # Convert inner lists to tuples to make them hashable
+                set1 = set(tuple(x) for x in ref_subset_list)
+                set2 = set(tuple(x) for x in query_subset_list)
+
+                # Create union and convert back to lists
+                union = [list(x) for x in set1.union(set2)]
+                ref_subset_list = union
+                query_subset_list = union
 
             dataset_splits.extend(
                 [
