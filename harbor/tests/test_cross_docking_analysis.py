@@ -15,16 +15,16 @@ from harbor.analysis.cross_docking import (
 
 def test_settings():
     settings = Settings()
-    settings.to_yml_file("test.yml")
+    settings.to_yaml_file("test.yaml")
 
     import numpy as np
 
     new_settings = Settings(n_per_split=np.arange(1, 21))
-    s2 = Settings.from_yml_file("test.yml")
+    s2 = Settings.from_yaml_file("test.yaml")
 
 
 def test_create_evaluators_from_settings():
-    settings = Settings.from_yml_file("test.yml")
+    settings = Settings.from_yaml_file("test.yaml")
     settings.n_per_split = [1]
     evs = settings.create_evaluators()
     assert len(evs) == 2

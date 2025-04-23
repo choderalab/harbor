@@ -708,8 +708,8 @@ class Evaluator(ModelBase):
     extra_splits: Optional[list[DatasetSplitType]] = Field(
         None, description="Additional dataset splits to be run after the first one"
     )
-    structure_choice: StructureChoice = Field(
-        StructureChoice(name="Dock_to_All", variable="Tanimoto", higher_is_better=True),
+    structure_choice: Optional[StructureChoice] = Field(
+        None,
         description="How to choose which structures to dock to",
     )
     scorer: Scorer = Field(..., description="How to score and rank resulting poses")
@@ -723,12 +723,13 @@ class Evaluator(ModelBase):
         df = self.pose_selector.run(df)
         results = []
         for i in range(self.n_bootstraps):
-            split1 = self.dataset_split.run(df)[0]
+            subset_df = self.dataset_split.run(df)[0]
             if self.extra_splits:
                 for split in self.extra_splits:
                     if split is not None:
-                        split1 = split.run(split1)[0]
-            subset_df = self.structure_choice.run(split1, groupby=self.groupby)
+                        subset_df = split.run(subset_df)[0]
+            if self.structure_choice is not None:
+                subset_df = self.structure_choice.run(subset_df, groupby=self.groupby)
             subset_df = self.scorer.run(subset_df, groupby=self.groupby)
             results.append(self.evaluator.run(subset_df, groupby=self.groupby))
             if self.dataset_split.deterministic:
@@ -779,6 +780,7 @@ class Evaluator(ModelBase):
         variables = [
             model.plot_name
             for model in [self.dataset_split, self.structure_choice, self.scorer]
+            if model is not None
         ]
         variables += [f"{self.n_bootstraps}reps"]
         return "_".join(variables)
@@ -792,7 +794,8 @@ class Evaluator(ModelBase):
             self.dataset_split,
             self.pose_selector,
         ]:
-            mydict.update(container.get_records())
+            if container is not None:
+                mydict.update(container.get_records())
         if self.extra_splits:
             for split in self.extra_splits:
                 mydict.update(split.get_records())
