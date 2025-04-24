@@ -1073,44 +1073,45 @@ class Settings(SettingsBase):
                 n_per_splits_to_use = self.n_per_split
 
             # subset can be a list, and we might want to make a list of subsets
-
             ref_subset_list = [self.reference_scaffold_id_subset]
             query_subset_list = [self.query_scaffold_id_subset]
 
-            if self.scaffold_split_option in [
-                ScaffoldSplitOptions.NOT_X_TO_X,
-                ScaffoldSplitOptions.ALL_TO_X,
-                ScaffoldSplitOptions.X_TO_Y,
-            ]:
-                # Get cluster sizes by counting unique ligands per cluster
-                cluster_sizes = df.groupby(self.reference_scaffold_id_column)[
-                    self.reference_ligand_column
-                ].nunique()
+            if self.reference_scaffold_id_subset is None:
+                if self.scaffold_split_option in [
+                    ScaffoldSplitOptions.NOT_X_TO_X,
+                    ScaffoldSplitOptions.ALL_TO_X,
+                    ScaffoldSplitOptions.X_TO_Y,
+                ]:
+                    # Get cluster sizes by counting unique ligands per cluster
+                    cluster_sizes = df.groupby(self.reference_scaffold_id_column)[
+                        self.reference_ligand_column
+                    ].nunique()
 
-                # Filter for clusters with more than 5 members
-                ref_subset_list = [
-                    [scaffold]
-                    for scaffold in cluster_sizes[
-                        cluster_sizes > self.reference_scaffold_min_count
-                    ].index.tolist()
-                ]
+                    # Filter for clusters with more than 5 members
+                    ref_subset_list = [
+                        [scaffold]
+                        for scaffold in cluster_sizes[
+                            cluster_sizes > self.reference_scaffold_min_count
+                        ].index.tolist()
+                    ]
 
-            if self.scaffold_split_option in [
-                ScaffoldSplitOptions.X_TO_NOT_X,
-                ScaffoldSplitOptions.X_TO_ALL,
-                ScaffoldSplitOptions.X_TO_Y,
-            ]:
-                # Do the same thing but for the query
-                cluster_sizes = df.groupby(self.query_scaffold_id_column)[
-                    self.query_ligand_column
-                ].nunique()
+            if self.query_scaffold_id_subset is None:
+                if self.scaffold_split_option in [
+                    ScaffoldSplitOptions.X_TO_NOT_X,
+                    ScaffoldSplitOptions.X_TO_ALL,
+                    ScaffoldSplitOptions.X_TO_Y,
+                ]:
+                    # Do the same thing but for the query
+                    cluster_sizes = df.groupby(self.query_scaffold_id_column)[
+                        self.query_ligand_column
+                    ].nunique()
 
-                query_subset_list = [
-                    [scaffold]
-                    for scaffold in cluster_sizes[
-                        cluster_sizes > self.query_scaffold_min_count
-                    ].index.tolist()
-                ]
+                    query_subset_list = [
+                        [scaffold]
+                        for scaffold in cluster_sizes[
+                            cluster_sizes > self.query_scaffold_min_count
+                        ].index.tolist()
+                    ]
             if self.scaffold_split_option in [ScaffoldSplitOptions.X_TO_Y]:
                 # let's make the subsets the union of both, removing duplicates
                 # Convert inner lists to tuples to make them hashable
