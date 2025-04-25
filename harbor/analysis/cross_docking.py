@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum, auto
@@ -149,26 +150,69 @@ class RandomSplit(ReferenceStructureSplitBase):
         return dfs
 
 
-## write a function that takes a structure and returns a random structure within timedelta from it
-def get_random_structure(structure, date_dict, timedelta=timedelta(days=365)) -> str:
+def get_unique_structures_randomized_by_date(
+    unique_structures: set,
+    date_dict: dict,
+    n_structures_to_return: int,
+    n_days_to_randomize: int,
+    date_format="%Y-%m-%d %H:%M:%S",
+) -> set:
     """
-    Get a random structure within timedelta of the input structure.
+    Get a set of N_STRUCTURES_TO_RETURN from the full set of UNIQUE_STRUCTURES
+    randomized by date in the DATE_DICT according to the number of days given by TIMEDELTA_DAYS.
+    """
+    if len(unique_structures) < n_structures_to_return:
+        warnings.warn(
+            f"Number of Unique Structures ({len(unique_structures)}) < N Structures to Return ({n_structures_to_return})."
+            f"Returning all unique structures."
+        )
+        return unique_structures
 
-    :param structure:
-    :param date_dict:
-    :param timedelta:
-    :return:
-    """
-    date = date_dict[structure]
-    date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
-    start_date = date - timedelta
-    end_date = date + timedelta
-    possible_structures = [
-        key
-        for key, value in date_dict.items()
-        if start_date <= datetime.strptime(value, "%Y-%m-%d %H:%M:%S") <= end_date
-    ]
-    return np.random.choice(possible_structures)
+    # make sure all the structures are in the date_dict
+    missing_structures = unique_structures - set(date_dict.keys())
+    if missing_structures:
+        raise ValueError(
+            f"The following structures are missing from the date_dict: {missing_structures}"
+        )
+
+    result = set()
+
+    df = pd.DataFrame(
+        {
+            "structure": list(unique_structures),
+            "date": [
+                datetime.strptime(date_dict[x], date_format) for x in unique_structures
+            ],
+        }
+    )
+
+    # Sort the structures by date
+    df.sort_values(by="date", inplace=True)
+
+    # Get the date of the nth structure
+    last_date = df.iloc[n_structures_to_return - 1]["date"]
+
+    last_date_with_buffer = last_date + timedelta(days=n_days_to_randomize)
+
+    # Get all the structures within that date range
+    candidates = df[df["date"] <= last_date_with_buffer]["structure"].tolist()
+
+    # Get a random sample of the candidates
+    if len(candidates) > n_structures_to_return:
+        candidates = np.random.choice(
+            candidates, size=n_structures_to_return, replace=False
+        )
+
+    if len(candidates) < n_structures_to_return:
+        raise RuntimeError(
+            f"{len(candidates)} candidates < {n_structures_to_return} structures to return."
+            f"Not sure how this could happen."
+        )
+
+    # Add the candidates to the result set
+    result.update(candidates)
+
+    return result
 
 
 class DateSplit(ReferenceStructureSplitBase):
@@ -215,16 +259,13 @@ class DateSplit(ReferenceStructureSplitBase):
                 )
 
             elif self.randomize_by_n_days > 0:
-                # I think this is probably super slow!
-                variable_split = structure_list[start:end]
-                variable_split = [
-                    get_random_structure(
-                        structure,
-                        self.date_dict,
-                        timedelta=timedelta(days=self.randomize_by_n_days),
-                    )
-                    for structure in variable_split
-                ]
+                unique_structures = df[self.reference_structure_column].unique()
+                variable_split = get_unique_structures_randomized_by_date(
+                    unique_structures,
+                    self.date_dict,
+                    self.n_per_split,
+                    self.randomize_by_n_days,
+                )
             else:
                 variable_split = structure_list[start:end]
             variable_splits.append(variable_split)
