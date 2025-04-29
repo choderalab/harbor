@@ -29,7 +29,7 @@ def test_settings():
 
 def test_create_evaluators_from_settings():
     settings = Settings.from_yaml_file("test.yaml")
-    settings.n_per_split = [1]
+    settings.n_reference_structures = [1]
     evs = settings.create_evaluators()
     assert len(evs) == 2
 

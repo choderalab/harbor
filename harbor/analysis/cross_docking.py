@@ -27,6 +27,27 @@ class ModelBase(BaseModel):
         pass
 
 
+class EmptyModel(ModelBase):
+    type_: str = Field("EmptyModel", description="Empty model")
+
+    def plot_name(self) -> str:
+        return ""
+
+    def get_records(self) -> dict:
+        return {}
+
+
+class EmptyDataframeModel(EmptyModel):
+    """
+    A model that does nothing to the dataframe.
+    """
+
+    type_: str = Field("EmptyDataframeModel", description="Empty dataframe model")
+
+    def run(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df
+
+
 class SettingsBase(BaseModel):
     def get_descriptions(self) -> dict:
         schema = self.model_json_schema()
