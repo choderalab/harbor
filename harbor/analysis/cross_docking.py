@@ -1,7 +1,6 @@
 import logging
 import warnings
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from enum import Enum, auto
 from typing_extensions import Self
 import abc
@@ -11,8 +10,257 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
+from enum import StrEnum
 import json
 import yaml
+from enum import Enum, StrEnum
+from operator import eq, gt, lt, ge, le, ne
+from pydantic import confloat
+
+
+class Operator(StrEnum):
+    EQ = "eq"
+    GT = "gt"
+    LT = "lt"
+    GE = "ge"
+    LE = "le"
+    NE = "ne"
+    IN = "in"
+
+    def to_callable(self) -> callable:
+        def isin(x, value):
+            if isinstance(value, (list, tuple, set)):
+                return x in value
+            return False
+
+        return {
+            self.EQ: eq,
+            self.GT: gt,
+            self.LT: lt,
+            self.GE: ge,
+            self.LE: le,
+            self.NE: ne,
+            self.IN: isin,
+        }[self]
+
+
+class ColumnFilter(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    column: str = Field(..., description="Column to filter on")
+    value: str | int | float | list
+    operator: Operator = Operator.EQ
+
+    @model_validator(mode="after")
+    def match_operator_with_value(self):
+        if self.operator == Operator.IN and not isinstance(self.value, (list, tuple)):
+            raise ValueError("Operator 'in' requires value to be a list or tuple.")
+        if self.operator != Operator.IN and isinstance(self.value, (list, tuple)):
+            raise ValueError("Operator 'in' is only valid for list or tuple values.")
+        return self
+
+    def filter(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        if self.column not in dataframe.columns:
+            raise ValueError(f"Column '{self.column}' not found in DataFrame.")
+        df = dataframe[
+            dataframe[self.column].apply(
+                lambda x: self.operator.to_callable()(x, self.value)
+            )
+        ]
+        return df
+
+
+class ColumnSortFilter(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    key_columns: list[str] = Field(..., description="Columns to get unique data from")
+    sort_column: str = Field(..., description="Columns to sort by")
+    ascending: bool = Field(
+        True, description="Sort in ascending order if True, descending if False"
+    )
+    number_to_return: int = Field(1, description="Number of rows to return")
+
+    def filter(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+
+        if self.sort_column in self.key_columns:
+            # If the sort column is also a key column, we need to remove it from the key columns
+            self.key_columns.remove(self.sort_column)
+
+        if self.sort_column not in dataframe.columns:
+            raise ValueError(f"Column '{self.sort_column}' not found in DataFrame.")
+        df = (
+            dataframe.sort_values(self.sort_column, ascending=self.ascending)
+            .groupby([key for key in self.key_columns])
+            .head(self.number_to_return)
+        )
+        return df
+
+
+def merge_on_common_columns(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
+    """Merge two DataFrames on all their common columns."""
+    common_cols = list(set(df1.columns) & set(df2.columns))
+    if not common_cols:
+        raise ValueError("No common columns found between DataFrames")
+    return pd.merge(df1, df2, on=common_cols, how="inner")
+
+
+class DataFrameType(StrEnum):
+    """Enum for DataFrame types."""
+
+    REFERENCE = "ReferenceData"
+    QUERY = "QueryData"
+    PAIRED = "PairedData"
+    POSE = "PoseData"
+    CHEMICAL_SIMILARITY = "ChemicalSimilarityData"
+    COMBINED = "CombinedData"
+
+    def __or__(self, other):
+        if not isinstance(other, DataFrameType):
+            return NotImplemented
+        return (self, other)
+
+
+class DataFrameModelBase(BaseModel):
+    name: str = Field(..., description="Unique name refering to this dataframe's data")
+    type: str = Field(..., description="Data frame type. Used for grouping.")
+    dataframe: pd.DataFrame = Field(
+        ..., description="DataFrame containing model data", exclude=True
+    )
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def __eq__(self, other):
+        if not isinstance(other, DataFrameModelBase):
+            return False
+        return (
+            self.dataframe.equals(other.dataframe)
+        )
+
+    @field_validator("type")
+    def check_matches_dataframe_types(cls, v):
+        if not DataFrameType(v):
+            raise ValueError
+        return v
+
+    def serialize(self, file_path: str | Path) -> Path:
+        # first write schema to json
+        file_path = Path(file_path)
+        with open(file_path.with_suffix(".json"), "w") as f:
+            json.dump(self.model_dump(), f)
+
+        # then write dataframe to parquet
+        self.dataframe.to_parquet(file_path.with_suffix(".parquet"))
+
+        return file_path
+
+    @classmethod
+    def deserialize(cls, file_path: str | Path) -> "DataFrameModelBase":
+        # load json schema
+        file_path = Path(file_path)
+
+        with open(file_path.with_suffix(".json"), "r") as f:
+            model_schema = json.load(f)
+
+        df = pd.read_parquet(file_path.with_suffix(".parquet"))
+        return cls(dataframe=df, **model_schema)
+
+
+
+
+class DataFrameModel(DataFrameModelBase):
+    key_columns: list[str] = Field(
+        ..., description="Columns that specify the unique keys"
+    )
+    other_columns: list[str] = Field(
+        [], description="The other columns expected in the data"
+    )
+
+    def __eq__(self, other):
+        if not isinstance(other, DataFrameModel):
+            return False
+        return (
+            self.dataframe.equals(other.dataframe)
+            and self.key_columns == other.key_columns
+        )
+
+    @field_validator('key_columns', 'other_columns')
+    def check_columns_are_unique(cls, v):
+        if len(set(v)) < len(v):
+            raise ValueError
+        return v
+
+    @model_validator(mode="after")
+    def check_columns_in_dataframe(self):
+        """Check if all expected columns are in DataFrame and ensure key_columns uniqueness."""
+        expected_cols = self.key_columns + self.other_columns
+        for col in expected_cols:
+            if col not in self.dataframe.columns:
+                raise ValueError(
+                    f"Expected Column '{col}' specified is not present in the DataFrame columns {self.dataframe.columns}."
+                )
+
+        additional_cols = [
+            col for col in self.dataframe.columns if col not in expected_cols
+        ]
+        self.other_columns.extend(additional_cols)
+        return self
+
+
+
+class DockingDataModel(DataFrameModelBase):
+    dataframe: pd.DataFrame = Field(
+        ..., description="DataFrame containing model data", exclude=True
+    )
+    key_columns_dict: dict[str, list[str]] = Field(
+        ...,
+        description="Dictionary mapping a unique name to a list of keys needed to query the dataset",
+    )
+    other_columns_dict: dict[str, list[str]] = Field(
+        ...,
+        description="Dictionary mapping a unique name to a list of columns corresponding to each internal dataframe",
+    )
+    def __eq__(self, other):
+        if not isinstance(other, DockingDataModel):
+            return False
+        return (
+            self.dataframe.equals(other.dataframe)
+            and set(self.get_key_columns()) == set(other.get_key_columns())
+            and set(self.get_other_columns()) == set(other.get_other_columns())
+            and set(self.get_dataframe_names()) == set(other.get_dataframe_names())
+        )
+
+    def get_dataframe_names(self) -> list:
+        return [ky for ky in self.key_columns_dict.keys()]
+
+    def get_key_columns(self) -> list:
+        return list(set([col for cols in self.key_columns_dict.values() for col in cols]))
+
+    def get_other_columns(self) -> list:
+        return list(set([col for cols in self.other_columns_dict.values() for col in cols]))
+
+    @classmethod
+    def from_models(cls, data_models) -> "DockingDataModel":
+        from functools import reduce
+
+        df = reduce(merge_on_common_columns, [model.dataframe for model in data_models])
+
+        return DockingDataModel(
+            name="DockingDataModel",
+            type=DataFrameType.COMBINED,
+            dataframe=df,
+            key_columns_dict={model.name: model.key_columns for model in data_models},
+            other_columns_dict={
+                model.name: model.other_columns for model in data_models
+            },
+        )
+
+    @model_validator(mode="after")
+    def check_columns_in_dataframe(self):
+        """Check if all expected columns are in DataFrame and ensure key_columns uniqueness."""
+        expected_cols = self.get_key_columns() + self.get_other_columns()
+        for col in expected_cols:
+            if col not in self.dataframe.columns:
+                raise ValueError(
+                    f"Expected Column '{col}' specified is not present in the DataFrame columns {self.dataframe.columns}."
+                )
+        return self
 
 
 class ModelBase(BaseModel):
@@ -92,8 +340,6 @@ class SplitBase(ModelBase):
 
     name: str = "SplitBase"
     type_: str = "SplitBase"
-    n_splits: int = Field(1, description="number of splits to generate")
-    n_per_split: int = Field(..., description="Number of values per split to generate")
     deterministic: bool = Field(
         False,
         description="Whether the split is deterministic, i.e. if True it should not be run in the bootstrapping loop.",
@@ -109,7 +355,7 @@ class SplitBase(ModelBase):
 
     @property
     def plot_name(self) -> str:
-        return f"{self.name}_{self.n_per_split}"
+        return f"{self.name}"
 
     def get_records(self) -> dict:
         if self.split_level == 0:
@@ -132,18 +378,101 @@ class ReferenceStructureSplitBase(SplitBase):
     reference_structure_column: str = Field(
         ..., description="Name of the column to distinguish reference structures by"
     )
-
-    @abc.abstractmethod
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
-        pass
+    n_reference_structures: int = Field(
+        None, description="Number of values per split to generate"
+    )
 
     def _get_records(self) -> dict:
         return {
             "Split": self.name,
-            "N_Per_Split": self.n_per_split,
+            "N_Reference_Structures": self.n_reference_structures,
             "Reference_Structure_Column": self.reference_structure_column,
         }
 
+def get_unique_structures_randomized_by_date(
+    df: pd.DataFrame,
+    structure_column: str,
+    date_column: str,
+    n_structures_to_return: int,
+    n_days_to_randomize: int,
+    date_format="%Y-%m-%d %H:%M:%S",
+    bootstraps: int = 1,
+) -> list[set]:
+    """
+    Get a set of structures randomized by date from a dataframe.
+
+    Args:
+        df: DataFrame containing structure and date information
+        structure_column: Name of the column containing structure identifiers
+        date_column: Name of the column containing dates
+        n_structures_to_return: Number of structures to return
+        n_days_to_randomize: Number of days to randomize the selection
+        date_format: Format of the dates in date_column
+
+    Returns:
+        Set of selected structure identifiers
+    """
+    # Get unique structures
+    unique_structures = df[structure_column].unique()
+
+    if len(unique_structures) < n_structures_to_return:
+        raise ValueError(
+            f"Number of Unique Structures ({len(unique_structures)}) < N Structures to Return ({n_structures_to_return})."
+            f"Returning all unique structures."
+        )
+
+    # Create working dataframe with unique structures and their dates
+    working_df = df[[structure_column, date_column]].drop_duplicates()
+    working_df["date"] = pd.to_datetime(working_df[date_column], format=date_format)
+    working_df.sort_values(by="date", inplace=True)
+
+    # Get the date of the nth structure
+    last_date = working_df.iloc[n_structures_to_return - 1]["date"]
+    last_date_with_buffer = last_date + pd.Timedelta(days=n_days_to_randomize)
+
+    # Get all structures within the date range
+    candidates = working_df[working_df["date"] <= last_date_with_buffer][
+        structure_column
+    ].tolist()
+
+    candidate_list = []
+    for i in range(bootstraps):
+        # Get a random sample of the candidates
+        if len(candidates) > n_structures_to_return:
+            candidate_sample = np.random.choice(
+                candidates, size=n_structures_to_return, replace=False
+            )
+            candidate_list.append(set(candidate_sample))
+
+        elif len(candidates) < n_structures_to_return:
+            raise RuntimeError(
+                f"{len(candidates)} candidates < {n_structures_to_return} structures to return."
+            )
+    return candidate_list
+
+
+def generate_random_samples(
+    values: list, n_values: int, n_samples: int
+) -> list[np.ndarray]:
+    """
+    Generate multiple random samples from a list of values.
+
+    Args:
+        values: List of values to sample from
+        n_values: Number of values to sample each time
+        n_samples: Number of samples to generate
+
+    Returns:
+        List of arrays containing the sampled values
+    """
+    if n_values > len(values):
+        raise ValueError(
+            f"Cannot sample {n_values} values from a list of {len(values)} values."
+        )
+    return [
+        np.random.choice(list(values), size=n_values, replace=False)
+        for _ in range(n_samples)
+    ]
 
 class RandomSplit(ReferenceStructureSplitBase):
     """
@@ -153,7 +482,7 @@ class RandomSplit(ReferenceStructureSplitBase):
     name: str = "RandomSplit"
     type_: str = "RandomSplit"
 
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+    def run(self, df: pd.DataFrame, bootstraps=1) -> [pd.DataFrame]:
         from random import shuffle
 
         variable_list = df[self.reference_structure_column].unique()

@@ -2,19 +2,253 @@ import pytest
 from datetime import datetime, timedelta
 import numpy as np
 from unittest.mock import patch
+from pathlib import Path
 
 from harbor.analysis.cross_docking import (
     Evaluator,
     PoseSelector,
     DateSplit,
+    ColumnFilter,
     SimilaritySplit,
     RandomSplit,
     Scorer,
     BinaryEvaluation,
+    DataFrameModel,
+    DataFrameType,
+    DockingDataModel,
     FractionGood,
     Settings,
     get_unique_structures_randomized_by_date,
 )
+import pandas as pd
+import numpy as np
+import itertools
+
+
+@pytest.fixture(autouse=True)
+def setup_random_state():
+    """Ensure consistent random state for all tests."""
+    np.random.seed(42)
+    yield
+    np.random.seed(None)  # Reset the random state after each test
+
+
+@pytest.fixture()
+def refs():
+    """Sample reference structures fixture."""
+    return [f"PDB{i}" for i in range(1, 10)]
+
+
+@pytest.fixture()
+def ligs():
+    """Sample ligands fixture."""
+    return [f"LIG_{i}" for i in range(1, 10)]
+
+
+@pytest.fixture()
+def ref_dataframe(refs):
+    """Sample reference data fixture."""
+    return pd.DataFrame(
+        {
+            "Reference_Structure": refs,
+            "Ref_Data_1": [np.random.random() for ref in refs],
+            "Date": [datetime.now() - timedelta(days=i) for i in range(len(refs))],
+            "Ref_Scaffold": [
+                np.random.choice([f"Scaffold_{i}" for i in range(10)]) for _ in refs
+            ],
+        }
+    )
+
+
+@pytest.fixture()
+def lig_dataframe(ligs):
+    """Sample ligand data fixture."""
+    return pd.DataFrame(
+        {
+            "Query_Ligand": ligs,
+            "Lig_Data_1": [np.random.random() for lig in ligs],
+            "Query_Scaffold": [
+                np.random.choice(["Scaffold1", "Scaffold2"]) for _ in ligs
+            ],
+        }
+    )
+
+
+@pytest.fixture()
+def pose_dataframe(refs, ligs):
+    """Sample pose results fixture."""
+    return pd.DataFrame.from_records(
+        [
+            {
+                "Reference_Structure": ref,
+                "Query_Ligand": lig,
+                "RMSD": np.random.random() * 8,
+                "Pose_ID": pose,
+            }
+            for ref, lig, pose in itertools.product(refs, ligs, range(0, 2))
+        ]
+    )
+
+
+@pytest.fixture()
+def ecfp_dataframe(refs, ligs):
+    """Sample ECFP data fixture."""
+    return pd.DataFrame.from_records(
+        [
+            {
+                "Reference_Structure": ref,
+                "Query_Ligand": lig,
+                "Tanimoto": np.random.random(),
+                "radius": radius,
+                "bitsize": bitsize,
+            }
+            for ref, lig, radius, bitsize in itertools.product(
+                refs, ligs, [2, 5], [2048]
+            )
+        ]
+    )
+
+
+@pytest.fixture()
+def tanimotocombo_data(refs, ligs):
+    """Sample TanimotoCombo data fixture."""
+    return pd.DataFrame.from_records(
+        [
+            {
+                "Reference_Structure": ref,
+                "Query_Ligand": lig,
+                "Tanimoto": np.random.random(),
+                "Aligned": aligned,
+            }
+            for ref, lig, aligned in itertools.product(refs, ligs, ["True", "False"])
+        ]
+    )
+
+
+@pytest.fixture()
+def scaffold_dataframe(refs, ligs, ref_dataframe, lig_dataframe):
+    """Sample scaffold data fixture."""
+    return pd.DataFrame.from_records(
+        [
+            {
+                "Reference_Structure": ref,
+                "Query_Ligand": lig,
+                "Tanimoto": (
+                    1
+                    if ref_dataframe[ref_dataframe["Reference_Structure"] == ref][
+                        "Ref_Scaffold"
+                    ].values[0]
+                    == lig_dataframe[lig_dataframe["Query_Ligand"] == lig][
+                        "Query_Scaffold"
+                    ].values[0]
+                    else 0
+                ),
+            }
+            for ref, lig in itertools.product(refs, ligs)
+        ]
+    )
+
+
+def test_column_filter(pose_dataframe):
+    """Test the ColumnFilter class."""
+
+    cf = ColumnFilter(
+        column="RMSD",
+        value=4.0,
+        operator="le",
+    )
+    filtered_df = cf.filter(pose_dataframe)
+    assert len(filtered_df) == 86  # 2 poses per reference-ligand pair
+    assert all(filtered_df["RMSD"] <= 4.0)
+
+    # Test with a different operator
+    cf = ColumnFilter(
+        column="RMSD",
+        value=4.0,
+        operator="ge",
+    )
+    filtered_df = cf.filter(pose_dataframe)
+    assert len(filtered_df) == 76
+    assert all(filtered_df["RMSD"] >= 4.0)
+
+
+class TestDockingDataModel:
+
+    @pytest.fixture()
+    def dataframe_model(self, pose_dataframe):
+        data = DataFrameModel(
+            dataframe=pose_dataframe,
+            key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
+        )
+        return data
+
+    def test_serialization(self, dataframe_model, tmpdir):
+        fp = dataframe_model.serialize(Path(tmpdir) / "test_pose_data")
+        assert fp.with_suffix(".parquet").exists()
+        assert fp.with_suffix(".json").exists()
+
+        loaded = DataFrameModel.deserialize(fp)
+
+        assert loaded == dataframe_model
+
+    def test_merge(self, pose_dataframe, ref_dataframe, lig_dataframe):
+        pose_df = DataFrameModel(
+            name="PoseData",
+            type=DataFrameType.POSE,
+            dataframe=pose_dataframe,
+            key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
+        )
+        ref_df = DataFrameModel(
+            name="RefData",
+            type=DataFrameType.REFERENCE,
+            dataframe=ref_dataframe,
+            key_columns=["Reference_Structure"],
+        )
+        lig_df = DataFrameModel(
+            name="QueryData",
+            type=DataFrameType.QUERY,
+            dataframe=lig_dataframe,
+            key_columns=["Query_Ligand"],
+        )
+        merged = DockingDataModel.from_models([pose_df, ref_df, lig_df])
+        assert merged.dataframe.size == 1458
+
+        assert set(merged.get_key_columns()) == {
+            "Query_Ligand",
+            "Reference_Structure",
+            "Pose_ID",
+        }
+
+    @pytest.fixture()
+    def docking_data_model(self, pose_dataframe, ref_dataframe, lig_dataframe):
+        pose_df = DataFrameModel(
+            name="PoseData",
+            type=DataFrameType.POSE,
+            dataframe=pose_dataframe,
+            key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
+        )
+        ref_df = DataFrameModel(
+            name="RefData",
+            type=DataFrameType.REFERENCE,
+            dataframe=ref_dataframe,
+            key_columns=["Reference_Structure"],
+        )
+        lig_df = DataFrameModel(
+            name="QueryData",
+            type=DataFrameType.QUERY,
+            dataframe=lig_dataframe,
+            key_columns=["Query_Ligand"],
+        )
+        return DockingDataModel.from_models([pose_df, ref_df, lig_df])
+
+    def test_docking_data_model_serialization(self, docking_data_model, tmpdir):
+        fp = docking_data_model.serialize(Path(tmpdir) / "test_pose_data")
+        assert fp.with_suffix(".parquet").exists()
+        assert fp.with_suffix(".json").exists()
+
+        loaded = DockingDataModel.deserialize(fp)
+
+        assert loaded == docking_data_model
 
 
 def test_settings():
