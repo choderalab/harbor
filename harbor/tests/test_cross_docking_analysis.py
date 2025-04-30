@@ -21,7 +21,7 @@ from harbor.analysis.cross_docking import (
     DataFrameType,
     DockingDataModel,
     SuccessRate,
-    Settings,
+    EvaluatorFactory,
     get_unique_structures_randomized_by_date,
 )
 import pandas as pd
@@ -510,23 +510,23 @@ class TestEvaluator:
 
 
 def test_settings():
-    settings = Settings()
+    settings = EvaluatorFactory()
     settings.to_yaml_file("test.yaml")
 
     import numpy as np
 
-    new_settings = Settings(n_per_split=np.arange(1, 21))
-    s2 = Settings.from_yaml_file("test.yaml")
+    new_settings = EvaluatorFactory(n_per_split=np.arange(1, 21))
+    s2 = EvaluatorFactory.from_yaml_file("test.yaml")
 
 
 def test_create_evaluators_from_settings():
-    settings = Settings.from_yaml_file("test.yaml")
+    settings = EvaluatorFactory.from_yaml_file("test.yaml")
     settings.n_reference_structures = [1]
     evs = settings.create_evaluators()
     assert len(evs) == 2
 
 
-def test_fraction_good():
+def test_success_rate():
     fg = SuccessRate(total=100, fraction=0.5, replicates=[0.5, 0.6, 0.7])
     assert fg.get_records() == {
         "Min": 0.5,

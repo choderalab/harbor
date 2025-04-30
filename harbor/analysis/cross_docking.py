@@ -813,9 +813,8 @@ class ScaffoldSplit(SplitBase):
         return [DockingDataModel(dataframe=df, **data.model_dump())]
 
 # TODO: There might be a better way to do this.
-DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit
-CoreSplit = RandomSplit | DateSplit
-ChemicalSplit = SimilaritySplit | ScaffoldSplit
+ReferenceSplitType = RandomSplit | DateSplit
+SimilaritySplitType = SimilaritySplit | ScaffoldSplit
 
 
 class SorterBase(ModelBase):
@@ -1048,7 +1047,6 @@ def get_class_from_name(name: str):
         case "Evaluator":
             return Evaluator
 
-
 class Evaluator(ModelBase):
     name: str = "Evaluator"
     type_: str = "Evaluator"
@@ -1056,8 +1054,8 @@ class Evaluator(ModelBase):
         PoseSelector(name="Default", variable="Pose_ID", number_to_return=1),
         description="How to choose which poses to keep",
     )
-    dataset_split: DatasetSplitType = Field(..., description="Dataset split")
-    extra_splits: Optional[list[DatasetSplitType]] = Field(
+    dataset_split: ReferenceSplitType = Field(None, description="Dataset split")
+    similarity_split: SimilaritySplitType = Field(
         None, description="Additional dataset splits to be run after the first one"
     )
     scorer: Scorer = Field(..., description="How to score and rank resulting poses")
@@ -1066,21 +1064,20 @@ class Evaluator(ModelBase):
     )
     n_bootstraps: int = Field(1, description="Number of bootstrap replicates to run")
 
-    def run_pose_selector(self, data:DockingDataModel) -> DockingDataModel:
+    def run_pose_selector(self, data: DockingDataModel) -> DockingDataModel:
         return self.pose_selector.run(data)
 
     def run_dataset_split(self, data: DockingDataModel) -> [DockingDataModel]:
-        return self.dataset_split.run(
-            data, bootstraps=self.n_bootstraps
-        )
-    def run_extra_splits(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
-        if self.extra_splits:
-            if self.extra_splits:
-                for split in self.extra_splits:
-                    if split is not None:
-                        data_splits: list[DockingDataModel] = [
-                            split.run(data_) for data_ in data_splits
-                        ]
+        if self.dataset_split is not None:
+            return self.dataset_split.run(data, bootstraps=self.n_bootstraps)
+        else:
+            return [data]
+
+    def run_similarity_split(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
+        if self.similarity_split is not None:
+            data_splits: list[DockingDataModel] = [
+                self.similarity_split.run(data_) for data_ in data_splits
+            ]
         return data_splits
 
     def run_scorer(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
@@ -1092,9 +1089,9 @@ class Evaluator(ModelBase):
 
     def run(self, data: DockingDataModel) -> SuccessRate:
         pose_selected = self.run_pose_selector(data)
-        split_data = self.run_dataset_split(pose_selected)
-        extra_split_data = self.run_extra_splits(split_data)
-        scored_data = self.run_scorer(extra_split_data)
+        dataset_split_data = self.run_dataset_split(pose_selected)
+        similarity_split_data = self.run_similarity_split(dataset_split_data)
+        scored_data = self.run_scorer(similarity_split_data)
         return self.calculate_results(scored_data)
 
 
@@ -1114,8 +1111,8 @@ class Evaluator(ModelBase):
     @model_validator(mode="after")
     def update_split_level(self) -> Self:
         self.dataset_split.split_level = 0
-        if self.extra_splits:
-            for level, split in enumerate(self.extra_splits, start=1):
+        if self.similarity_split:
+            for level, split in enumerate(self.similarity_split, start=1):
                 if split is not None:
                     split.split_level = level
         return self
@@ -1151,19 +1148,19 @@ class Evaluator(ModelBase):
         ]:
             if container is not None:
                 mydict.update(container.get_records())
-        if self.extra_splits:
-            for split in self.extra_splits:
+        if self.similarity_split:
+            for split in self.similarity_split:
                 mydict.update(split.get_records())
         return mydict
 
-
 class Results(BaseModel):
     evaluator: Evaluator
-    success_rate: SuccessRate
+    success_rate: SuccessRate = Field(...,
+                                      description="Resulting success rate, with some information about the data")
 
     def get_records(self) -> dict:
         mydict = self.evaluator.get_records()
-        mydict.update(self.fraction_good.get_records())
+        mydict.update(self.success_rate.get_records())
         return mydict
 
     @classmethod
@@ -1173,7 +1170,7 @@ class Results(BaseModel):
 
     @classmethod
     def calculate_results(
-        cls, df: pd.DataFrame, evaluators: list["Evaluator"]
+            cls, df: pd.DataFrame, evaluators: list["Evaluator"]
     ) -> list["Results"]:
         for ev in tqdm(evaluators):
             result = ev.run(df)
@@ -1182,10 +1179,147 @@ class Results(BaseModel):
     @classmethod
     def df_from_results(cls, results: list["Results"]) -> pd.DataFrame:
         return pd.DataFrame.from_records([result.get_records() for result in results])
+class EvaluatorSettingsBase(SettingsBase):
+    """Base class for all evaluator settings with automatic exclude handling"""
+    use: bool = Field(True, description="Whether this class of settings should be used")
+
+    def model_dump(self, **kwargs):
+        """Override model_dump to automatically exclude fields when use is False"""
+        if not self.use:
+            # When use is False, only include the 'use' field
+            return {"use": False}
+        return super().model_dump(**kwargs)
+
+class PoseSelectionSettings(EvaluatorSettingsBase):
+    """
+    Settings flags used to generate
+    """
+    use: bool = True
+    pose_id_column: str = Field(
+        "Pose_ID", description="Name of the column containing the pose id"
+    )
+    n_poses: list[int] = Field(None, description="Number of poses to select")
+
+class POSITScorerSettings(EvaluatorSettingsBase):
+    """Settings for scoring methods"""
+    posit_score_column_name: str = Field(
+        "docking-confidence-POSIT",
+        description="Name of the column containing the POSIT score"
+    )
+    posit_name: str = Field("POSIT_Probability", description="Name of the POSIT score")
 
 
-class Settings(SettingsBase):
-    # General Settings
+class RMSDScorerSettings(EvaluatorSettingsBase):
+    use_rmsd_scorer: bool = Field(..., description="Whether to use RMSD scoring")
+    rmsd_column_name: str = "RMSD"
+    rmsd_name: str = Field("RMSD", description="Name of the RMSD score")
+
+
+class ReferenceSplitSettings(EvaluatorSettingsBase):
+    n_reference_structures: Optional[list[int]] = Field(
+        None,
+        description="List of number of structures to try"
+    )
+    update_n_per_split: bool = Field(None, description="Update number of references based on data")
+
+    @model_validator(mode="after")
+    def check_valid_settings(
+            self,
+    ) -> Self:
+        if self.n_reference_structures is None and not self.update_n_per_split:
+            raise ValueError(
+                "n_per_split must be provided if update_n_per_split is False"
+            )
+        return self
+
+    @field_validator("n_reference_structures", mode="before")
+    def convert_to_list(cls, v):
+        if isinstance(v, int):
+            return [v]
+        elif isinstance(v, np.ndarray):
+            return v.tolist()
+        return v
+
+class RandomSplitSettings(ReferenceSplitSettings):
+    pass
+
+
+class DateSplitSettings(ReferenceSplitSettings):
+    """Settings for date-based splitting"""
+    reference_structure_date_column: str = Field(
+        "Reference_Structure_Date",
+        description="Column containing reference structure deposition date"
+    )
+    randomize_by_n_days: int = Field(1, description="Days to randomize by")
+
+class ScaffoldSplitSettings(EvaluatorSettingsBase):
+    """Settings for scaffold-based splitting"""
+    scaffold_split_option: ScaffoldSplitOptions = Field(...,description="How to split data by scaffold")
+    query_scaffold_id_column: str = Field(
+        "cluster_id",
+        description="Column containing query scaffold ID"
+    )
+    reference_scaffold_id_column: str = Field(
+        "cluster_id_Reference",
+        description="Column containing reference scaffold ID"
+    )
+    query_scaffold_id_subset: Optional[list[int]] = Field(
+        None,
+        description="List of query scaffold IDs to consider"
+    )
+    reference_scaffold_id_subset: Optional[list[int]] = Field(
+        None,
+        description="List of reference scaffold IDs to consider"
+    )
+    query_scaffold_min_count: Optional[int] = Field(
+        5,
+        description="Minimum ligands in query scaffold"
+    )
+    reference_scaffold_min_count: Optional[int] = Field(
+        1,
+        description="Minimum ligands in reference scaffold"
+    )
+class SimilaritySplitSettings(EvaluatorSettingsBase):
+    similarity_column_name: Optional[str] = Field(
+        None,
+        description="Name of the column containing the similarity value between the query and reference ligands",
+    )
+    similarity_groupby: dict = {}
+    similarity_range: list[float] = Field(
+        [0, 1],
+        description="Range of values the similarity score can take. Used to generate a standardized set of thresholds",
+    )
+    similarity_n_thresholds: int = Field(21, description="Number of thresholds to use")
+
+    @model_validator(mode="after")
+    def check_valid_settings(
+            self,
+    ):
+        if self.use and self.similarity_column_name is None:
+            raise ValueError(
+                "Similarity column name must be provided if using similarity split"
+            )
+
+
+class EvaluatorFactory(
+    PoseSelectionSettings,
+    RMSDScorerSettings,
+    POSITScorerSettings,
+    RandomSplitSettings,
+    DateSplitSettings,
+    SimilaritySplitSettings,
+    ScaffoldSplitSettings
+):
+    class Config:
+        validate_assignment = True
+
+    combine_core_and_chemical_splits: bool = Field(
+        False,
+        description=f"Combine {ReferenceSplitType} and {SimilaritySplitType} into a single evaluator",
+    )
+    rmsd_cutoff: float = Field(
+        2.0, description="RMSD cutoff to label the resulting poses as successful"
+    )
     n_bootstraps: int = Field(1000, description="Number of bootstrapped samples to run")
     query_ligand_column: str = Field(
         "Query_Ligand", description="Name of the column containing the query ligand id"
@@ -1198,118 +1332,6 @@ class Settings(SettingsBase):
         "Reference_Structure",
         description="Name of the column to distinguish reference structures by",
     )
-
-    # Pose Selection
-    pose_id_column: str = Field(
-        "Pose_ID", description="Name of the column containing the pose id"
-    )
-    n_poses: list[int] = Field(None, description="Number of poses to select")
-
-    # Dataset Splitting
-    use_random_split: bool = True
-    update_n_per_split: bool = Field(
-        True, description="Update n_per_split based on data"
-    )
-    n_per_split: Optional[list[int]] = Field(
-        None,
-        description="A list of the number of reference structures that will be used in each split",
-    )
-
-    # Date Split
-    use_date_split: bool = False
-    reference_structure_date_column: str = Field(
-        "Reference_Structure_Date",
-        description="Name of the column where the date of the reference structure deposition is saved",
-    )
-    randomize_by_n_days: int = 1
-
-    # Similarity splitting options
-    use_similarity_split: bool = False
-    similarity_column_name: Optional[str] = Field(
-        None,
-        description="Name of the column containing the similarity value between the query and reference ligands",
-    )
-    similarity_groupby: dict = {}
-    similarity_range: list[float] = Field(
-        [0, 1],
-        description="Range of values the similarity score can take. Used to generate a standardized set of thresholds",
-    )
-    similarity_n_thresholds: int = Field(21, description="Number of thresholds to use")
-
-    # Scaffold splitting options
-    use_scaffold_split: bool = False
-    scaffold_split_option: ScaffoldSplitOptions = Field(
-        ScaffoldSplitOptions.X_TO_X,
-        description=f"How to split the data by scaffold, one of {ScaffoldSplitOptions}",
-    )
-    query_scaffold_id_column: str = Field(
-        "cluster_id", description="Name of the column containing the query scaffold id"
-    )
-    reference_scaffold_id_column: str = Field(
-        "cluster_id_Reference",
-        description="Name of the column containing the reference scaffold id",
-    )
-    query_scaffold_id_subset: Optional[list[int]] = Field(
-        None, description="List of query scaffold IDs to consider"
-    )
-    reference_scaffold_id_subset: Optional[list[int]] = Field(
-        None, description="List of reference scaffold IDs to consider"
-    )
-    query_scaffold_min_count: Optional[int] = Field(
-        5,
-        description="Minimum number of ligands in a query scaffold to consider it for docking",
-    )
-    reference_scaffold_min_count: Optional[int] = Field(
-        1,
-        description="Minimum number of ligands in a reference scaffold to consider it for docking",
-    )
-
-    # Combine Core and Chemical Splits
-    combine_core_and_chemical_splits: bool = Field(
-        False,
-        description=f"Combine {CoreSplit} and {ChemicalSplit} into single splits",
-    )
-
-    # Scoring Options
-    use_posit_scorer: bool = True
-    posit_score_column_name: str = Field(
-        "docking-confidence-POSIT",
-        description="Name of the column containing the POSIT score",
-    )
-    posit_name: str = Field("POSIT_Probability", description="Name of the POSIT score")
-    use_rmsd_scorer: bool = True
-    rmsd_column_name: str = "RMSD"
-    rmsd_name: str = Field("RMSD", description="Name of the RMSD score")
-
-    # Evaluator Options
-    rmsd_cutoff: float = Field(
-        2.0, description="RMSD cutoff to label the resulting poses as successful"
-    )
-
-    class Config:
-        validate_assignment = True
-
-    @model_validator(mode="after")
-    def check_valid_settings(
-        self,
-    ) -> Self:
-        if self.use_similarity_split and self.similarity_column_name is None:
-            raise ValueError(
-                "Similarity column name must be provided if using similarity split"
-            )
-        if self.n_per_split is None and not self.update_n_per_split_from_data:
-            raise ValueError(
-                "n_per_split must be provided if update_n_per_split is False"
-            )
-        return self
-
-    @field_validator("n_per_split", mode="before")
-    def convert_to_list(cls, v):
-        if isinstance(v, int):
-            return [v]
-        elif isinstance(v, np.ndarray):
-            return v.tolist()
-        return v
 
     @property
     def similarity_thresholds(self) -> np.ndarray:
@@ -1351,7 +1373,7 @@ class Settings(SettingsBase):
 
     def create_dataset_splits(
         self, df: pd.DataFrame = None, combine_core_and_chemical=False
-    ) -> list[DatasetSplitType]:
+    ) -> list[ReferenceSplitSettings]:
         if combine_core_and_chemical:
             self.combine_core_and_chemical_splits = True
 
@@ -1496,8 +1518,8 @@ class Settings(SettingsBase):
         return dataset_splits
 
     def combine_splits(
-        self, splits: list[DatasetSplitType]
-    ) -> (list[CoreSplit], list[ChemicalSplit]):
+        self, splits: list[ReferenceSplitType | SimilaritySplitType]
+    ) -> (list[ReferenceSplitType], list[SimilaritySplitType]):
         """
         Combine multiple splits into one split
         :param splits:
@@ -1509,9 +1531,9 @@ class Settings(SettingsBase):
         core_splits = defaultdict(list)
         chemical_splits = defaultdict(list)
         for ds in splits:
-            if isinstance(ds, CoreSplit):
+            if isinstance(ds, ReferenceSplitType):
                 core_splits[ds.name].append(ds)
-            elif isinstance(ds, ChemicalSplit):
+            elif isinstance(ds, SimilaritySplitType):
                 chemical_splits[ds.name].append(ds)
 
         dataset_splits = []
@@ -1586,7 +1608,7 @@ class Settings(SettingsBase):
                     evaluator = Evaluator(
                         pose_selector=pose_selector,
                         dataset_split=dataset_split,
-                        extra_splits=extra_splits[i] if extra_splits else None,
+                        similarity_split=extra_splits[i] if extra_splits else None,
                         scorer=scorer,
                         evaluator=rmsd_evaluator,
                         groupby=[self.query_ligand_column],
@@ -1595,3 +1617,4 @@ class Settings(SettingsBase):
                     evaluators.append(evaluator)
 
         return evaluators
+
