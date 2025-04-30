@@ -1,3 +1,4 @@
+import itertools
 import logging
 import warnings
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
@@ -10,7 +11,7 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
-from enum import StrEnum
+from enum import StrEnum, Flag, auto
 import json
 import yaml
 from enum import Enum, StrEnum
@@ -208,6 +209,7 @@ class DockingDataModel(DataFrameModelBase):
     dataframe: pd.DataFrame = Field(
         ..., description="DataFrame containing model data", exclude=True
     )
+    data_types_dict: dict[str, str] = Field(..., description="Dictionary mapping unique names to their type.")
     key_columns_dict: dict[str, list[str]] = Field(
         ...,
         description="Dictionary mapping a unique name to a list of keys needed to query the dataset",
@@ -226,6 +228,19 @@ class DockingDataModel(DataFrameModelBase):
             and set(self.get_dataframe_names()) == set(other.get_dataframe_names())
         )
 
+    def get_ref_name(self) -> str:
+        return [k for k, v in self.data_types_dict.items() if v == DataFrameType.REFERENCE][0]
+
+    def get_lig_name(self) -> str:
+        return [k for k, v in self.data_types_dict.items() if v == DataFrameType.QUERY][0]
+
+    def get_unique_refs(self) -> list:
+        return list(self.dataframe[self.key_columns_dict[self.get_ref_name()][0]].unique())
+
+    def get_unique_ligs(self) -> list:
+        return list(self.dataframe[self.key_columns_dict[self.get_lig_name()][0]].unique())
+
+
     def get_dataframe_names(self) -> list:
         return [ky for ky in self.key_columns_dict.keys()]
 
@@ -239,12 +254,17 @@ class DockingDataModel(DataFrameModelBase):
     def from_models(cls, data_models) -> "DockingDataModel":
         from functools import reduce
 
+        names = [model.name for model in data_models]
+        if len(set(names)) < len(names):
+            raise ValueError(f"DataFrameModels should have unique names: {names}")
+
         df = reduce(merge_on_common_columns, [model.dataframe for model in data_models])
 
         return DockingDataModel(
             name="DockingDataModel",
             type=DataFrameType.COMBINED,
             dataframe=df,
+            data_types_dict = {model.name: model.type for model in data_models},
             key_columns_dict={model.name: model.key_columns for model in data_models},
             other_columns_dict={
                 model.name: model.other_columns for model in data_models
@@ -482,88 +502,16 @@ class RandomSplit(ReferenceStructureSplitBase):
     name: str = "RandomSplit"
     type_: str = "RandomSplit"
 
-    def run(self, df: pd.DataFrame, bootstraps=1) -> [pd.DataFrame]:
-        from random import shuffle
-
-        variable_list = df[self.reference_structure_column].unique()
-        shuffle(variable_list)
-
-        variable_splits = []
-        dfs = []
-        for i in range(self.n_splits):
-            start = i * self.n_per_split
-            end = i * self.n_per_split + self.n_per_split
-            variable_splits.append(variable_list[start:end])
-            dfs.append(
-                df[df[self.reference_structure_column].isin(variable_list[start:end])]
+    def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
+        if self.n_reference_structures is None:
+            # then we're returning everything, so no differences
+            return [data]
+        else:
+            random_ref_samples = generate_random_samples(
+                data.dataframe[self.reference_structure_column].unique(), n_values=self.n_reference_structures, n_samples=bootstraps
             )
-        return dfs
-
-
-def get_unique_structures_randomized_by_date(
-    unique_structures: set,
-    date_dict: dict,
-    n_structures_to_return: int,
-    n_days_to_randomize: int,
-    date_format="%Y-%m-%d %H:%M:%S",
-) -> set:
-    """
-    Get a set of N_STRUCTURES_TO_RETURN from the full set of UNIQUE_STRUCTURES
-    randomized by date in the DATE_DICT according to the number of days given by TIMEDELTA_DAYS.
-    """
-    if len(unique_structures) < n_structures_to_return:
-        warnings.warn(
-            f"Number of Unique Structures ({len(unique_structures)}) < N Structures to Return ({n_structures_to_return})."
-            f"Returning all unique structures."
-        )
-        return unique_structures
-
-    # make sure all the structures are in the date_dict
-    missing_structures = unique_structures - set(date_dict.keys())
-    if missing_structures:
-        raise ValueError(
-            f"The following structures are missing from the date_dict: {missing_structures}"
-        )
-
-    result = set()
-
-    df = pd.DataFrame(
-        {
-            "structure": list(unique_structures),
-            "date": [
-                datetime.strptime(date_dict[x], date_format) for x in unique_structures
-            ],
-        }
-    )
-
-    # Sort the structures by date
-    df.sort_values(by="date", inplace=True)
-
-    # Get the date of the nth structure
-    last_date = df.iloc[n_structures_to_return - 1]["date"]
-
-    last_date_with_buffer = last_date + timedelta(days=n_days_to_randomize)
-
-    # Get all the structures within that date range
-    candidates = df[df["date"] <= last_date_with_buffer]["structure"].tolist()
-
-    # Get a random sample of the candidates
-    if len(candidates) > n_structures_to_return:
-        candidates = np.random.choice(
-            candidates, size=n_structures_to_return, replace=False
-        )
-
-    if len(candidates) < n_structures_to_return:
-        raise RuntimeError(
-            f"{len(candidates)} candidates < {n_structures_to_return} structures to return."
-            f"Not sure how this could happen."
-        )
-
-    # Add the candidates to the result set
-    result.update(candidates)
-
-    return result
-
+        return [DockingDataModel(dataframe=data.dataframe[data.dataframe[self.reference_structure_column].isin(sample)],
+                                 **data.model_dump()) for sample in random_ref_samples]
 
 class DateSplit(ReferenceStructureSplitBase):
     """
@@ -572,55 +520,31 @@ class DateSplit(ReferenceStructureSplitBase):
 
     name: str = "DateSplit"
     type_: str = "DateSplit"
-    date_dict: dict = Field(
+    date_column: str = Field(
         ...,
-        description="Dictionary of dates to split the data by of the form dict[str, str] where the key is the structure name and the value is the date",
-    )
-    balanced: bool = Field(
-        True,
-        description="Whether to split the data uniformly in time (i.e. 1 split every N months) or balanced such that each split has the same number of structures",
-    )
-    initial_structure_error: int = Field(
-        1,
-        description="Initial error in the structure date. Error of 1 means no error (pick the first structure every time). Error of 20 means when you are picking up to the first 20 structures, randomize them.",
+        description="Column corresponding to date deposition",
     )
     randomize_by_n_days: int = Field(
         0,
         description="Randomize the structures by n days. If 0 no randomization is done. If 1 or greater, for each structure, it can be randomly replaced by any other structure collected on that day or n-1 days from it's collection date.",
     )
 
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
-        # sort the structures by date
-        dates = np.array(list(self.date_dict.values()))
-        structures = np.array(list(self.date_dict.keys()))
-        sort_idx = np.argsort(dates)
-        structure_list = structures[sort_idx]
-        variable_splits = []
-        dfs = []
-        for i in range(self.n_splits):
-            start = i * self.n_per_split
-            end = i * self.n_per_split + self.n_per_split
+    def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
 
-            if self.n_per_split < self.initial_structure_error:
-                variable_split = np.random.choice(
-                    structure_list[start : self.initial_structure_error],
-                    self.n_per_split,
-                    replace=False,
-                )
+        if self.n_reference_structures is None:
+            # then we're returning everything, so no differences
+            return [data for _ in range(bootstraps)]
 
-            elif self.randomize_by_n_days > 0:
-                unique_structures = df[self.reference_structure_column].unique()
-                variable_split = get_unique_structures_randomized_by_date(
-                    unique_structures,
-                    self.date_dict,
-                    self.n_per_split,
-                    self.randomize_by_n_days,
-                )
-            else:
-                variable_split = structure_list[start:end]
-            variable_splits.append(variable_split)
-            dfs.append(df[df[self.reference_structure_column].isin(variable_split)])
-        return dfs
+        ref_lists = get_unique_structures_randomized_by_date(
+            data.dataframe,
+            self.reference_structure_column,
+            self.date_column,
+            self.n_reference_structures,
+            self.randomize_by_n_days,
+            bootstraps=bootstraps,
+        )
+        return [DockingDataModel(dataframe=data.dataframe[data.dataframe[self.reference_structure_column].isin(ref_list)],
+                                 **data.model_dump()) for ref_list in ref_lists]
 
 
 class SimilaritySplit(SplitBase):
@@ -691,8 +615,31 @@ class SimilaritySplit(SplitBase):
         return_dict.update({key: value for key, value in self.groupby.items()})
         return return_dict
 
+class ScaffoldSplitFlags(Flag):
+    NONE = 0
+    REQUIRES_QUERY_SUBSET = auto()
+    REQUIRES_REFERENCE_SUBSET = auto()
 
-class ScaffoldSplitOptions(Enum):
+    # one of the two must be passed
+    REQUIRES_EITHER_SUBSET = auto()
+
+    # both must be passed
+    REQUIRES_BOTH = REQUIRES_QUERY_SUBSET | REQUIRES_REFERENCE_SUBSET
+
+    # might not necessarily require them, but if they are passed, there should only be one of them
+    REQUIRES_SINGLE_QUERY_SUBSET_IF_PASSED = auto()
+    REQUIRES_SINGLE_QUERY_SUBSET = REQUIRES_SINGLE_QUERY_SUBSET_IF_PASSED | REQUIRES_QUERY_SUBSET
+
+    REQUIRES_SINGLE_REFERENCE_SUBSET_IF_PASSED = auto()
+    REQUIRES_SINGLE_REFERENCE_SUBSET = REQUIRES_SINGLE_REFERENCE_SUBSET_IF_PASSED | REQUIRES_REFERENCE_SUBSET
+
+    REQUIRES_SINGLE_SUBSETS_IF_PASSED = REQUIRES_SINGLE_QUERY_SUBSET_IF_PASSED | REQUIRES_SINGLE_REFERENCE_SUBSET_IF_PASSED
+    REQUIRES_SINGLE_SUBSETS = REQUIRES_BOTH | REQUIRES_SINGLE_SUBSETS_IF_PASSED
+
+    ALLOW_OVERLAPPING_QUERY_AND_REFERENCE = auto()
+
+
+class ScaffoldSplitOptions(StrEnum):
     """
     Options for how to split the structures by scaffold.
     If a datasets has scaffolds A-F,
@@ -708,6 +655,20 @@ class ScaffoldSplitOptions(Enum):
     X_TO_Y = "x_to_y"  # ,"Dock X to Y for X, Y in zip([all your scaffolds], [all your scaffolds]",)
     X_TO_ALL = "x_to_all"  # Dock X to all data for X in [all your scaffolds]
     ALL_TO_X = "all_to_x"  # Dock all to X for X in [all your scaffolds]
+    @property
+    def flags(self) -> ScaffoldSplitFlags:
+        return {
+            self.X_TO_X: (
+                    ScaffoldSplitFlags.REQUIRES_EITHER_SUBSET |
+                    ScaffoldSplitFlags.REQUIRES_SINGLE_SUBSETS_IF_PASSED |
+                    ScaffoldSplitFlags.ALLOW_OVERLAPPING_QUERY_AND_REFERENCE
+            ),
+            self.X_TO_NOT_X: ScaffoldSplitFlags.REQUIRES_SINGLE_QUERY_SUBSET,
+            self.NOT_X_TO_X: ScaffoldSplitFlags.REQUIRES_SINGLE_REFERENCE_SUBSET,
+            self.X_TO_Y: ScaffoldSplitFlags.REQUIRES_SINGLE_SUBSETS,
+            self.X_TO_ALL: ScaffoldSplitFlags.REQUIRES_SINGLE_QUERY_SUBSET | ScaffoldSplitFlags.ALLOW_OVERLAPPING_QUERY_AND_REFERENCE,
+            self.ALL_TO_X: ScaffoldSplitFlags.REQUIRES_SINGLE_REFERENCE_SUBSET | ScaffoldSplitFlags.ALLOW_OVERLAPPING_QUERY_AND_REFERENCE,
+        }[self]
 
 
 class ScaffoldSplit(SplitBase):
@@ -723,19 +684,18 @@ class ScaffoldSplit(SplitBase):
     reference_scaffold_id_column: str = Field(
         ..., description="Column name for the reference scaffold ID"
     )
-    query_scaffold_id_subset: Optional[list[int]] = Field(
+    query_scaffold_id_subset: Optional[list[int|str]] = Field(
         None,
         description="List of query scaffold IDs to consider. If None, consider all scaffolds.",
     )
-    reference_scaffold_id_subset: Optional[list[int]] = Field(
+    reference_scaffold_id_subset: Optional[list[int|str]] = Field(
         None,
         description="List of reference scaffold IDs to consider. If None, consider all scaffolds.",
     )
-    split_option: ScaffoldSplitOptions = Field(
-        ScaffoldSplitOptions.X_TO_Y,
+    split_option: ScaffoldSplitOptions = Field(...,
         description="How to split the data by scaffold",
     )
-    deterministic: bool = True
+    deterministic: bool = Field(True, description="Deterministic split")
 
     @field_validator("split_option", mode="before")
     def convert_to_string(cls, v):
@@ -743,121 +703,9 @@ class ScaffoldSplit(SplitBase):
             return v.value
         return v
 
-    @model_validator(mode="after")
-    def validate_model(self) -> Self:
-        option = self.split_option
-
-        if (
-            option == ScaffoldSplitOptions.NOT_X_TO_X
-            or option == ScaffoldSplitOptions.ALL_TO_X
-        ):
-            if (
-                not self.reference_scaffold_id_subset
-                or len(self.reference_scaffold_id_subset) != 1
-            ):
-                raise ValueError(
-                    f"{option} requires exactly one item in reference_scaffold_id_subset"
-                )
-
-        elif (
-            option == ScaffoldSplitOptions.X_TO_NOT_X
-            or option == ScaffoldSplitOptions.X_TO_ALL
-        ):
-            if (
-                not self.query_scaffold_id_subset
-                or len(self.query_scaffold_id_subset) != 1
-            ):
-                raise ValueError(
-                    f"{option} requires exactly one item in query_scaffold_id_subset"
-                )
-
-        elif option == ScaffoldSplitOptions.X_TO_Y:
-            if (
-                not self.query_scaffold_id_subset
-                or not self.reference_scaffold_id_subset
-                or len(self.query_scaffold_id_subset) != 1
-                or len(self.reference_scaffold_id_subset) != 1
-            ):
-                raise ValueError(
-                    f"{option} requires exactly one item in both query_ and reference_scaffold_id_subset"
-                )
-
-        # if both subsets are length 1 and are the same,
-        # and the split option is not X_TO_X, X_TO_ALL, or ALL_TO_X, there won't be any data to analyze
-        split_options_that_can_have_the_same_query_and_reference = [
-            ScaffoldSplitOptions.X_TO_X,
-            ScaffoldSplitOptions.X_TO_Y,
-            ScaffoldSplitOptions.X_TO_ALL,
-            ScaffoldSplitOptions.ALL_TO_X,
-        ]
-        if (
-            not self.query_scaffold_id_subset is None
-            and len(self.query_scaffold_id_subset) == 1
-            and self.query_scaffold_id_subset == self.reference_scaffold_id_subset
-            and not self.split_option
-            in split_options_that_can_have_the_same_query_and_reference
-        ):
-            raise Warning(
-                f"Query and reference scaffold IDs are the same ({self.query_scaffold_id_subset[0]}), "
-                f"and there are only one of each, "
-                f"but you haven't picked one of these split options: {split_options_that_can_have_the_same_query_and_reference}. "
-                f"This means there's no data to analyze."
-            )
-
-        return self
-
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
-
-        dfs = []
-
-        # first, filter by the query scaffold ID
-        if self.query_scaffold_id_subset is not None:
-            df = df[
-                df[self.query_scaffold_id_column].isin(self.query_scaffold_id_subset)
-            ]
-
-        # then, filter by the reference scaffold ID
-        if self.reference_scaffold_id_subset is not None:
-            df = df[
-                df[self.reference_scaffold_id_column].isin(
-                    self.reference_scaffold_id_subset
-                )
-            ]
-
-        split_option = self.split_option
-        if split_option == ScaffoldSplitOptions.X_TO_X:
-            df = df[
-                df[self.query_scaffold_id_column]
-                == df[self.reference_scaffold_id_column]
-            ]
-            dfs.append(df)
-
-        elif split_option in [
-            ScaffoldSplitOptions.NOT_X_TO_X,
-            ScaffoldSplitOptions.X_TO_NOT_X,
-        ]:
-            df = df[
-                df[self.query_scaffold_id_column]
-                != df[self.reference_scaffold_id_column]
-            ]
-            dfs.append(df)
-
-        elif split_option in [
-            ScaffoldSplitOptions.X_TO_Y,
-            ScaffoldSplitOptions.ALL_TO_X,
-            ScaffoldSplitOptions.X_TO_ALL,
-        ]:
-            # we already did the necessary work up top!
-            dfs.append(df)
-        else:
-            raise NotImplementedError(f"Split option {split_option} not implemented")
-
-        return dfs
-
     def _get_records(self) -> dict:
         return_dict = {
             "Split": self.name,
-            "N_Per_Split": self.n_per_split,
             "Query_Scaffold_ID_Column": self.query_scaffold_id_column,
             "Reference_Scaffold_ID_Column": self.reference_scaffold_id_column,
             "Split_Option": self.split_option,
@@ -866,6 +714,81 @@ class ScaffoldSplit(SplitBase):
         }
         return return_dict
 
+    @model_validator(mode="after")
+    def validate_model(self) -> Self:
+        option = self.split_option
+        flags = self.split_option.flags
+
+        # Check reference subset requirements
+        if ScaffoldSplitFlags.REQUIRES_REFERENCE_SUBSET in flags and not self.reference_scaffold_id_subset:
+            raise ValueError(
+                f"{option} requires at least one item in reference_scaffold_id_subset"
+            )
+        if ScaffoldSplitFlags.REQUIRES_SINGLE_REFERENCE_SUBSET_IF_PASSED in flags and self.reference_scaffold_id_subset and len(
+                self.reference_scaffold_id_subset) != 1:
+            raise ValueError(
+                f"{option} requires exactly one item in reference_scaffold_id_subset"
+            )
+
+        # Check query subset requirements
+        if ScaffoldSplitFlags.REQUIRES_QUERY_SUBSET in flags and not self.query_scaffold_id_subset:
+            raise ValueError(
+                f"{option} requires at least one item in query_scaffold_id_subset"
+            )
+        if flags & ScaffoldSplitFlags.REQUIRES_SINGLE_QUERY_SUBSET_IF_PASSED and self.query_scaffold_id_subset and len(
+                self.query_scaffold_id_subset) != 1:
+            raise ValueError(
+                f"{option} requires exactly one item in query_scaffold_id_subset"
+            )
+
+        # Check either subset requirement
+        if ScaffoldSplitFlags.REQUIRES_EITHER_SUBSET in flags and not (
+                self.query_scaffold_id_subset or self.reference_scaffold_id_subset):
+            raise ValueError(
+                f"{option} requires at least one of query_scaffold_id_subset or reference_scaffold_id_subset"
+            )
+
+        # Check both subsets requirement
+        if ScaffoldSplitFlags.REQUIRES_BOTH in flags and not (
+                self.query_scaffold_id_subset and self.reference_scaffold_id_subset):
+            raise ValueError(
+                f"{option} requires both query_scaffold_id_subset and reference_scaffold_id_subset"
+            )
+
+        # Check for overlapping scaffolds when not allowed
+        if (
+                self.query_scaffold_id_subset
+                and self.reference_scaffold_id_subset
+                and len(set(self.query_scaffold_id_subset).intersection(self.reference_scaffold_id_subset)) > 0
+                and not (ScaffoldSplitFlags.ALLOW_OVERLAPPING_QUERY_AND_REFERENCE in flags)
+        ):
+            raise ValueError(
+                f"Query and reference scaffold IDs are the same ({self.query_scaffold_id_subset[0]}), "
+                f"but {option} does not allow overlapping scaffolds."
+            )
+
+        return self
+
+    def run(self, data: DockingDataModel) -> [DockingDataModel]:
+        """Split data based on scaffold relationships."""
+        df = data.dataframe
+        # set scaffold subsets if not provided
+        if self.reference_scaffold_id_subset is None:
+            self.reference_scaffold_id_subset = df[self.reference_scaffold_id_column].unique().tolist()
+        if self.query_scaffold_id_subset is None:
+            self.query_scaffold_id_subset = df[self.query_scaffold_id_column].unique().tolist()
+
+        # Filter by scaffold subsets first
+        mask = df[self.query_scaffold_id_column].isin(self.query_scaffold_id_subset)
+        mask &= df[self.reference_scaffold_id_column].isin(self.reference_scaffold_id_subset)
+        df = df[mask]
+
+        # Handle different split options
+        if self.split_option == ScaffoldSplitOptions.X_TO_X:
+            df = df[df[self.query_scaffold_id_column] == df[self.reference_scaffold_id_column]]
+        elif self.split_option in (ScaffoldSplitOptions.NOT_X_TO_X, ScaffoldSplitOptions.X_TO_NOT_X):
+            df = df[df[self.query_scaffold_id_column] != df[self.reference_scaffold_id_column]]
+        return [DockingDataModel(dataframe=df, **data.model_dump())]
 
 # TODO: There might be a better way to do this.
 DatasetSplitType = RandomSplit | DateSplit | SimilaritySplit | ScaffoldSplit

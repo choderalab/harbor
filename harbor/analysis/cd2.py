@@ -848,7 +848,7 @@ class RandomSplit(ReferenceStructureSplitBase):
 
     def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
         docking_model = data.copy()
-        ref_list = docking_model.get_unique_refs()
+        ref_list = list(docking_model.get_unique_refs())
         if self.n_reference_structures is None:
             return [docking_model for _ in range(bootstraps)]
         else:

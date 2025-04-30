@@ -10,8 +10,10 @@ from harbor.analysis.cross_docking import (
     DateSplit,
     ColumnFilter,
     SimilaritySplit,
+    ScaffoldSplit,
     RandomSplit,
     Scorer,
+    ScaffoldSplitOptions,
     BinaryEvaluation,
     DataFrameModel,
     DataFrameType,
@@ -54,7 +56,7 @@ def ref_dataframe(refs):
             "Ref_Data_1": [np.random.random() for ref in refs],
             "Date": [datetime.now() - timedelta(days=i) for i in range(len(refs))],
             "Ref_Scaffold": [
-                np.random.choice([f"Scaffold_{i}" for i in range(10)]) for _ in refs
+                np.random.choice([f"Scaffold_{i}" for i in range(5)]) for _ in refs
             ],
         }
     )
@@ -68,7 +70,7 @@ def lig_dataframe(ligs):
             "Query_Ligand": ligs,
             "Lig_Data_1": [np.random.random() for lig in ligs],
             "Query_Scaffold": [
-                np.random.choice(["Scaffold1", "Scaffold2"]) for _ in ligs
+                np.random.choice([f"Scaffold_{i}" for i in range(5)]) for _ in ligs
             ],
         }
     )
@@ -177,6 +179,8 @@ class TestDockingDataModel:
     @pytest.fixture()
     def dataframe_model(self, pose_dataframe):
         data = DataFrameModel(
+            name="PoseData",
+            type=DataFrameType.POSE,
             dataframe=pose_dataframe,
             key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
         )
@@ -249,6 +253,132 @@ class TestDockingDataModel:
         loaded = DockingDataModel.deserialize(fp)
 
         assert loaded == docking_data_model
+
+    def test_docking_data_model_methods(self, refs, docking_data_model):
+        assert set(docking_data_model.get_unique_refs()) == set(refs)
+        assert len(docking_data_model.get_unique_refs()) == 9
+
+    def test_random_split(self, docking_data_model):
+        rs = RandomSplit(n_reference_structures=5, reference_structure_column="Reference_Structure")
+
+        results = rs.run(docking_data_model, bootstraps=10)
+        unique_refs = [str(sorted(result.get_unique_refs())) for result in results]
+        assert len(set(unique_refs)) > 1
+
+    def test_date_split(self, docking_data_model):
+        date_split = DateSplit(
+            n_reference_structures=3,
+            reference_structure_column="Reference_Structure",
+            date_column="Date",
+            randomize_by_n_days=3,
+        )
+        splits = date_split.run(docking_data_model, bootstraps=10)
+        assert len(splits) == 10
+
+        # make sure the splits are not all the same
+        assert len(set([tuple(split.get_unique_refs()) for split in splits])) > 1
+
+        # make sure the splits have the right number of structures
+        assert all(len(split.get_unique_refs()) == 3 for split in splits)
+
+    @pytest.mark.parametrize(
+        "split_option,query_subset,ref_subset",
+        [
+            (ScaffoldSplitOptions.X_TO_Y, "Scaffold_1", "Scaffold_2"),
+            (ScaffoldSplitOptions.X_TO_NOT_X, "Scaffold_1", None),
+            (ScaffoldSplitOptions.NOT_X_TO_X, None, "Scaffold_1"),
+            (ScaffoldSplitOptions.X_TO_ALL, "Scaffold_2", None),
+            (ScaffoldSplitOptions.ALL_TO_X, None, "Scaffold_2"),
+            (ScaffoldSplitOptions.X_TO_X, "Scaffold_4", None)
+        ]
+    )
+    def test_x_to_y_scaffold_split(self, split_option, query_subset, ref_subset, docking_data_model, tmpdir):
+        fp = docking_data_model.serialize(tmpdir / "test_file")
+        loaded = DockingDataModel.deserialize(fp)
+        """Test the ScaffoldSplit class."""
+        scaffold_split = ScaffoldSplit(
+            query_scaffold_id_column="Query_Scaffold",
+            reference_scaffold_id_column="Ref_Scaffold",
+            split_option=split_option,
+            reference_scaffold_id_subset=[ref_subset] if ref_subset else None,
+            query_scaffold_id_subset=[query_subset] if query_subset else None,
+        )
+        splits = scaffold_split.run(loaded)
+        assert len(splits) == 1
+
+        split_data = splits[0]
+
+        combined_df = split_data.dataframe
+
+        # check that the ref and query scaffolds are the only ones included
+        if ref_subset:
+            assert all(
+                combined_df["Ref_Scaffold"].isin([ref_subset])
+            ), f"Ref_Scaffold should only contain {ref_subset}"
+        if query_subset:
+            assert all(
+                combined_df["Query_Scaffold"].isin([query_subset])
+            ), f"Query_Scaffold should only contain {query_subset}"
+
+        if split_option in (
+                ScaffoldSplitOptions.X_TO_Y,
+                ScaffoldSplitOptions.X_TO_NOT_X,
+                ScaffoldSplitOptions.NOT_X_TO_X,
+        ):
+            # None of the scaffolds should match
+            assert (
+                    len(
+                        combined_df[
+                            combined_df["Query_Scaffold"] == combined_df["Ref_Scaffold"]
+                            ]
+                    )
+                    == 0
+            )
+        elif split_option in ScaffoldSplitOptions.X_TO_ALL:
+            # should have the same refs as before
+            assert set(split_data.get_unique_refs()) == set(docking_data_model.get_unique_refs())
+        elif split_option in ScaffoldSplitOptions.ALL_TO_X:
+            # should have the same ligs as before
+            assert set(split_data.get_unique_ligs()) == set(docking_data_model.get_unique_ligs())
+
+    @pytest.mark.parametrize(
+        "split_option,query_subset,ref_subset",
+        [
+            # X_TO_X requires at least one to be set and for it to be single
+            (ScaffoldSplitOptions.X_TO_X, None, None),
+            (ScaffoldSplitOptions.X_TO_X, ["Scaffold_1", "Scaffold_2"], None),
+
+            # X_TO_NOT_X requires query subset
+            (ScaffoldSplitOptions.X_TO_NOT_X, None, ["Scaffold_1"]),
+
+            # NOT_X_TO_X requires reference subset
+            (ScaffoldSplitOptions.NOT_X_TO_X, ["Scaffold_1"], None),
+
+            # X_TO_Y requires both subsets and they can't overlap
+            (ScaffoldSplitOptions.X_TO_Y, None, ["Scaffold_1"]),
+            (ScaffoldSplitOptions.X_TO_Y, ["Scaffold_1"], None),
+            (ScaffoldSplitOptions.X_TO_Y, ["Scaffold_1"], ["Scaffold_1"]),
+
+            # ALL_TO_X requires reference subset
+            (ScaffoldSplitOptions.ALL_TO_X, ["Scaffold_1"], None),
+
+            # X_TO_ALL requires query subset
+            (ScaffoldSplitOptions.X_TO_ALL, None, ["Scaffold_1"]),
+        ]
+    )
+    def test_scaffold_split_incompatible_combinations(
+            self, docking_data_model, split_option, query_subset, ref_subset
+    ):
+        """Test that ScaffoldSplit raises appropriate errors for incompatible combinations."""
+        with pytest.raises(ValueError):
+            scaffold_split = ScaffoldSplit(
+                query_scaffold_id_column="Query_Scaffold",
+                reference_scaffold_id_column="Ref_Scaffold",
+                split_option=split_option,
+                query_scaffold_id_subset=query_subset,
+                reference_scaffold_id_subset=ref_subset,
+            )
+            scaffold_split.run(docking_data_model)
 
 
 def test_settings():
