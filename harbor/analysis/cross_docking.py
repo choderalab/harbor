@@ -228,18 +228,23 @@ class DockingDataModel(DataFrameModelBase):
             and set(self.get_dataframe_names()) == set(other.get_dataframe_names())
         )
 
-    def get_ref_name(self) -> str:
+    def get_ref_data_name(self) -> str:
         return [k for k, v in self.data_types_dict.items() if v == DataFrameType.REFERENCE][0]
 
-    def get_lig_name(self) -> str:
+    def get_ref_column(self) -> str:
+        return self.key_columns_dict[self.get_ref_data_name()][0]
+
+    def get_lig_data_name(self) -> str:
         return [k for k, v in self.data_types_dict.items() if v == DataFrameType.QUERY][0]
 
+    def get_lig_column(self) -> str:
+        return self.key_columns_dict[self.get_lig_data_name()][0]
+
     def get_unique_refs(self) -> list:
-        return list(self.dataframe[self.key_columns_dict[self.get_ref_name()][0]].unique())
+        return list(self.dataframe[self.get_ref_column()].unique())
 
     def get_unique_ligs(self) -> list:
-        return list(self.dataframe[self.key_columns_dict[self.get_lig_name()][0]].unique())
-
+        return list(self.dataframe[self.get_lig_column()].unique())
 
     def get_dataframe_names(self) -> list:
         return [ky for ky in self.key_columns_dict.keys()]
@@ -249,6 +254,13 @@ class DockingDataModel(DataFrameModelBase):
 
     def get_other_columns(self) -> list:
         return list(set([col for cols in self.other_columns_dict.values() for col in cols]))
+
+    def get_pose_data_columns(self) -> list:
+        pose_data_key = [k for k, v in self.data_types_dict.items() if v == DataFrameType.POSE][0]
+        return list(self.key_columns_dict[pose_data_key])
+
+    def get_total_poses(self) -> int:
+        return len(self.dataframe.groupby(self.get_pose_data_columns()))
 
     @classmethod
     def from_models(cls, data_models) -> "DockingDataModel":
@@ -264,7 +276,7 @@ class DockingDataModel(DataFrameModelBase):
             name="DockingDataModel",
             type=DataFrameType.COMBINED,
             dataframe=df,
-            data_types_dict = {model.name: model.type for model in data_models},
+            data_types_dict={model.name: model.type for model in data_models},
             key_columns_dict={model.name: model.key_columns for model in data_models},
             other_columns_dict={
                 model.name: model.other_columns for model in data_models
@@ -281,6 +293,16 @@ class DockingDataModel(DataFrameModelBase):
                     f"Expected Column '{col}' specified is not present in the DataFrame columns {self.dataframe.columns}."
                 )
         return self
+
+    def apply_filters(self, filters: list[ColumnFilter | ColumnSortFilter]):
+        """
+        Apply filters in place to self.dataframe
+        :param filters:
+        :return:
+        """
+        for filter_ in filters:
+            self.dataframe = filter_.filter(self.dataframe)
+
 
 
 class ModelBase(BaseModel):
@@ -803,9 +825,7 @@ class SorterBase(ModelBase):
         ..., description="Category of sort (i.e. why is sorting necessary here"
     )
     variable: str = Field(..., description="Variable used to sort the data")
-    higher_is_better: bool = Field(
-        True, description="Higher values are better. Defaults True"
-    )
+    ascending: bool = Field(True, description="Higher values are better. Defaults True")
     number_to_return: Optional[int] = Field(
         None, description="Number of values to return. Returns all values if None."
     )
@@ -816,12 +836,9 @@ class SorterBase(ModelBase):
             return None
         return v
 
-    def run(self, df, groupby: list[str]) -> pd.DataFrame:
-        return (
-            df.sort_values(self.variable, ascending=not self.higher_is_better)
-            .groupby(groupby)
-            .head(self.number_to_return)
-        )
+    @abc.abstractmethod
+    def run(self, data: DockingDataModel) -> DockingDataModel:
+        pass
 
     @property
     def plot_name(self) -> str:
@@ -836,51 +853,64 @@ class SorterBase(ModelBase):
         }
 
 
-class StructureChoice(SorterBase):
-    type_: str = "StructureChoice"
-    category: str = "StructureChoice"
+class PoseSelector(SorterBase):
+    type_: str = "PoseSelector"
+    category: str = "PoseSelection"
+
+    def run(self, data: DockingDataModel) -> DockingDataModel:
+        key_columns = data.get_pose_data_columns()
+        sf = ColumnSortFilter(
+            sort_column=self.variable,
+            key_columns=key_columns,
+            ascending=self.ascending,
+            number_to_return=self.number_to_return,
+        )
+        data.apply_filters([sf])
+        return data
+
+
 
 
 class Scorer(SorterBase):
     category: str = "Score"
     type_: str = "Scorer"
 
+    def run(self, data: DockingDataModel) -> DockingDataModel:
+        key_columns = [data.get_lig_column()]
+
+        sf = ColumnSortFilter(
+            sort_column=self.variable,
+            key_columns=key_columns,
+            ascending=self.ascending,
+            number_to_return=self.number_to_return,
+        )
+        data.apply_filters([sf])
+        return data
+
 
 class POSITScorer(Scorer):
+    type_: str = "POSITScorer"
     name: str = "POSIT_Probability"
     variable: str = "docking-confidence-POSIT"
-    higher_is_better: bool = True
+    ascending: bool = False
     number_to_return: int = 1
 
 
 class RMSDScorer(Scorer):
+    type_: str = "RMSDScorer"
     name: str = "RMSD"
     variable: str = "RMSD"
-    higher_is_better: bool = False
+    ascending: bool = True
     number_to_return: int = 1
 
 
-class PoseSelector(SorterBase):
-    type_: str = "PoseSelector"
-    category: str = "PoseSelection"
-    groupby: list[str] = ["Query_Ligand", "Reference_Ligand"]
-    higher_is_better: bool = False
-
-    def run(self, df: pd.DataFrame, groupby=None) -> pd.DataFrame:
-        return SorterBase.run(self, df, groupby=self.groupby)
-
-
-class FractionGood(ModelBase):
-    from pydantic import confloat
-
-    name: str = "FractionGood"
-    type_: str = "FractionGood"
+class SuccessRate(ModelBase):
+    name: str = "SuccessRate"
+    type_: str = "SuccessRate"
     total: int = Field(..., description="Total number of items being evaluated")
-    fraction: confloat(ge=0, le=1) = Field(
-        ..., description='Fraction of "good" values returned'
-    )
+    fraction: confloat(ge=0, le=1) = Field(..., description="Fraction of successes")
     replicates: list[float] = Field(
-        [], description='List of "good" fractions for error bar analysis'
+        [], description="Replicates used for error bar analysis"
     )
 
     @property
@@ -928,10 +958,10 @@ class FractionGood(ModelBase):
         return ci_lower
 
     @classmethod
-    def from_replicates(cls, reps: list["FractionGood"]) -> "FractionGood":
+    def from_replicates(cls, reps: list["SuccessRate"]) -> "SuccessRate":
         all_fracs = np.array([rep.fraction for rep in reps])
         totals = np.array([rep.total for rep in reps])
-        return FractionGood(
+        return SuccessRate(
             total=totals.max(), fraction=all_fracs.mean(), replicates=list(all_fracs)
         )
 
@@ -962,15 +992,21 @@ class BinaryEvaluation(ModelBase):
         description="Whether values below or above the cutoff are good. Defaults to below.",
     )
 
-    def run(self, df, groupby: list[str] = ()) -> FractionGood:
-        total = len(df.groupby(groupby))
-        if total == 0:
-            return FractionGood(total=0, fraction=0)
+    def run(self, data: DockingDataModel) -> SuccessRate:
+        df = data.dataframe
+        total_by_ligand = len(df.groupby(data.get_lig_column()))
+        if total_by_ligand < len(df):
+            # check which columns it can be
+            raise ValueError(
+                f"There are more rows in your dataframe ({len(df)}) than can be selected by {data.get_lig_column()}, ({total_by_ligand})"
+            )
+        if total_by_ligand == 0:
+            return SuccessRate(total=0, fraction=0)
         if self.below_cutoff_is_good:
-            fraction = df[self.variable].apply(lambda x: x <= self.cutoff).sum() / total
+            fraction = df[self.variable].apply(lambda x: x <= self.cutoff).sum() / total_by_ligand
         else:
-            fraction = df[self.variable].apply(lambda x: x >= self.cutoff).sum() / total
-        return FractionGood(total=total, fraction=fraction)
+            fraction = df[self.variable].apply(lambda x: x >= self.cutoff).sum() / total_by_ligand
+        return SuccessRate(total=total_by_ligand, fraction=fraction)
 
     def get_records(self) -> dict:
         return {
@@ -997,14 +1033,16 @@ def get_class_from_name(name: str):
             return SimilaritySplit
         case "ScaffoldSplit":
             return ScaffoldSplit
-        case "StructureChoice":
-            return StructureChoice
         case "Scorer":
             return Scorer
+        case "RMSDScorer":
+            return RMSDScorer
+        case "POSITScorer":
+            return POSITScorer
         case "PoseSelector":
             return PoseSelector
         case "FractionGood":
-            return FractionGood
+            return SuccessRate
         case "BinaryEvaluation":
             return BinaryEvaluation
         case "Evaluator":
@@ -1022,39 +1060,47 @@ class Evaluator(ModelBase):
     extra_splits: Optional[list[DatasetSplitType]] = Field(
         None, description="Additional dataset splits to be run after the first one"
     )
-    structure_choice: Optional[StructureChoice] = Field(
-        None,
-        description="How to choose which structures to dock to",
-    )
     scorer: Scorer = Field(..., description="How to score and rank resulting poses")
     evaluator: BinaryEvaluation = Field(
         ..., description="How to determine how good the results are"
     )
     n_bootstraps: int = Field(1, description="Number of bootstrap replicates to run")
-    groupby: list[str] = Field(..., description="List of variables that group the data")
 
-    def run(self, df: pd.DataFrame) -> FractionGood:
-        df = self.pose_selector.run(df)
-        results = []
-        for i in range(self.n_bootstraps):
-            subset_df = self.dataset_split.run(df)[0]
+    def run_pose_selector(self, data:DockingDataModel) -> DockingDataModel:
+        return self.pose_selector.run(data)
+
+    def run_dataset_split(self, data: DockingDataModel) -> [DockingDataModel]:
+        return self.dataset_split.run(
+            data, bootstraps=self.n_bootstraps
+        )
+    def run_extra_splits(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
+        if self.extra_splits:
             if self.extra_splits:
                 for split in self.extra_splits:
                     if split is not None:
-                        subset_df = split.run(subset_df)[0]
-            if self.structure_choice is not None:
-                subset_df = self.structure_choice.run(subset_df, groupby=self.groupby)
-            subset_df = self.scorer.run(subset_df, groupby=self.groupby)
-            results.append(self.evaluator.run(subset_df, groupby=self.groupby))
-            if self.dataset_split.deterministic:
-                # no need to run more than once because nothing will change!
-                break
-        return FractionGood.from_replicates(results)
+                        data_splits: list[DockingDataModel] = [
+                            split.run(data_) for data_ in data_splits
+                        ]
+        return data_splits
+
+    def run_scorer(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
+        return [self.scorer.run(data_) for data_ in data_splits]
+
+    def calculate_results(self, data_splits: [DockingDataModel]) -> SuccessRate:
+        results = [self.evaluator.run(data_) for data_ in data_splits]
+        return SuccessRate.from_replicates(results)
+
+    def run(self, data: DockingDataModel) -> SuccessRate:
+        pose_selected = self.run_pose_selector(data)
+        split_data = self.run_dataset_split(pose_selected)
+        extra_split_data = self.run_extra_splits(split_data)
+        scored_data = self.run_scorer(extra_split_data)
+        return self.calculate_results(scored_data)
+
 
     @field_validator(
         "pose_selector",
         "dataset_split",
-        "structure_choice",
         "scorer",
         "evaluator",
         mode="before",
@@ -1075,16 +1121,12 @@ class Evaluator(ModelBase):
         return self
 
     def to_json_file(self, file_path: str | Path) -> Path:
-        import json
-
         with open(file_path, "w") as f:
             f.write(self.model_dump_json())
         return file_path
 
     @classmethod
     def from_json_file(cls, file_path: str | Path) -> "Evaluator":
-        import json
-
         with open(file_path, "r") as f:
             data = json.load(f)
         return cls(**data)
@@ -1093,7 +1135,7 @@ class Evaluator(ModelBase):
     def plot_name(self) -> str:
         variables = [
             model.plot_name
-            for model in [self.dataset_split, self.structure_choice, self.scorer]
+            for model in [self.dataset_split, self.scorer]
             if model is not None
         ]
         variables += [f"{self.n_bootstraps}reps"]
@@ -1102,7 +1144,6 @@ class Evaluator(ModelBase):
     def get_records(self) -> dict:
         mydict = {"Bootstraps": self.n_bootstraps}
         for container in [
-            self.structure_choice,
             self.scorer,
             self.evaluator,
             self.dataset_split,
@@ -1118,7 +1159,7 @@ class Evaluator(ModelBase):
 
 class Results(BaseModel):
     evaluator: Evaluator
-    fraction_good: FractionGood
+    success_rate: SuccessRate
 
     def get_records(self) -> dict:
         mydict = self.evaluator.get_records()

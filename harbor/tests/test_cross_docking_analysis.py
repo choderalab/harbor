@@ -13,12 +13,14 @@ from harbor.analysis.cross_docking import (
     ScaffoldSplit,
     RandomSplit,
     Scorer,
+    RMSDScorer,
+    POSITScorer,
     ScaffoldSplitOptions,
     BinaryEvaluation,
     DataFrameModel,
     DataFrameType,
     DockingDataModel,
-    FractionGood,
+    SuccessRate,
     Settings,
     get_unique_structures_randomized_by_date,
 )
@@ -86,6 +88,7 @@ def pose_dataframe(refs, ligs):
                 "Query_Ligand": lig,
                 "RMSD": np.random.random() * 8,
                 "Pose_ID": pose,
+                'docking-confidence-POSIT': np.random.random(),
             }
             for ref, lig, pose in itertools.product(refs, ligs, range(0, 2))
         ]
@@ -150,6 +153,27 @@ def scaffold_dataframe(refs, ligs, ref_dataframe, lig_dataframe):
         ]
     )
 
+@pytest.fixture()
+def docking_data_model(pose_dataframe, ref_dataframe, lig_dataframe):
+    pose_df = DataFrameModel(
+        name="PoseData",
+        type=DataFrameType.POSE,
+        dataframe=pose_dataframe,
+        key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
+    )
+    ref_df = DataFrameModel(
+        name="RefData",
+        type=DataFrameType.REFERENCE,
+        dataframe=ref_dataframe,
+        key_columns=["Reference_Structure"],
+    )
+    lig_df = DataFrameModel(
+        name="QueryData",
+        type=DataFrameType.QUERY,
+        dataframe=lig_dataframe,
+        key_columns=["Query_Ligand"],
+    )
+    return DockingDataModel.from_models([pose_df, ref_df, lig_df])
 
 def test_column_filter(pose_dataframe):
     """Test the ColumnFilter class."""
@@ -174,7 +198,7 @@ def test_column_filter(pose_dataframe):
     assert all(filtered_df["RMSD"] >= 4.0)
 
 
-class TestDockingDataModel:
+class TestDataFrameModel:
 
     @pytest.fixture()
     def dataframe_model(self, pose_dataframe):
@@ -223,6 +247,7 @@ class TestDockingDataModel:
             "Pose_ID",
         }
 
+class TestDockingDataModel:
     @pytest.fixture()
     def docking_data_model(self, pose_dataframe, ref_dataframe, lig_dataframe):
         pose_df = DataFrameModel(
@@ -257,6 +282,8 @@ class TestDockingDataModel:
     def test_docking_data_model_methods(self, refs, docking_data_model):
         assert set(docking_data_model.get_unique_refs()) == set(refs)
         assert len(docking_data_model.get_unique_refs()) == 9
+
+class TestSplits:
 
     def test_random_split(self, docking_data_model):
         rs = RandomSplit(n_reference_structures=5, reference_structure_column="Reference_Structure")
@@ -380,6 +407,107 @@ class TestDockingDataModel:
             )
             scaffold_split.run(docking_data_model)
 
+    def test_pose_selector(self, docking_data_model):
+        pose_selector = PoseSelector(name="Default", variable="Pose_ID", number_to_return=1)
+        new_data = pose_selector.run(docking_data_model)
+        assert all(new_data.dataframe["Pose_ID"] == 0)
+
+class TestEvaluator:
+    @pytest.fixture()
+    def pose_selector(self, docking_data_model):
+        return PoseSelector(name="Default", variable="Pose_ID", number_to_return=1)
+    @pytest.fixture()
+    def random_split(self, docking_data_model):
+        return RandomSplit(
+                reference_structure_column=docking_data_model.get_ref_column(), n_reference_structures=5,
+            )
+
+    @pytest.fixture()
+    def date_split(self, docking_data_model):
+        return DateSplit(
+            n_reference_structures=3,
+            reference_structure_column="Reference_Structure",
+            date_column="Date",
+            randomize_by_n_days=3,
+        )
+
+    @pytest.fixture()
+    def rmsd_scorer(self, docking_data_model):
+        return RMSDScorer()
+
+    @pytest.fixture()
+    def posit_scorer(self, docking_data_model):
+        return POSITScorer()
+
+    @pytest.fixture()
+    def binary_evaluator(self, docking_data_model):
+        return BinaryEvaluation(variable="RMSD", cutoff=2)
+
+    def test_evaluator(self, docking_data_model, refs, ligs, random_split, rmsd_scorer, binary_evaluator):
+        ev = Evaluator(
+            dataset_split=random_split,
+            scorer=rmsd_scorer,
+            evaluator=binary_evaluator,
+            n_bootstraps=1000,
+        )
+        data_list = ev.run_dataset_split(docking_data_model)
+        dfs = [data.dataframe[data.dataframe["Pose_ID"] == 0] for data in data_list]
+        lig_total = len(ligs)
+        fractions = []
+        for df in dfs:
+            filtered = df.sort_values("RMSD").groupby("Query_Ligand").head(1)
+            total = len(filtered)
+            assert lig_total == total
+            fraction = filtered["RMSD"].apply(lambda x: x <= 2).sum() / total
+            fractions.append(SuccessRate(total=lig_total, fraction=fraction))
+        manual = SuccessRate.from_replicates(fractions)
+
+        success_rate = ev.run(docking_data_model)
+        assert isinstance(success_rate, SuccessRate)
+        assert np.isclose(success_rate.fraction, manual.fraction, 0.01)
+
+    @pytest.mark.parametrize('dataset_split',
+                             ['random', 'date_split'])
+    @pytest.mark.parametrize('scorer',
+                             ['rmsd', 'posit'])
+    def test_evaluator_performance(self, docking_data_model, refs, ligs, dataset_split, random_split, date_split, scorer, rmsd_scorer, posit_scorer, binary_evaluator):
+        ev = Evaluator(
+            dataset_split=random_split if dataset_split == 'random' else date_split,
+            scorer=rmsd_scorer if scorer == 'rmsd' else posit_scorer,
+            evaluator=binary_evaluator,
+            n_bootstraps=1000,
+        )
+
+        # compare time
+        import time
+
+        # Time old evaluator
+        start_time = time.perf_counter()
+        results = ev.run(docking_data_model)
+        total_time = time.perf_counter() - start_time
+
+        assert total_time < 2
+
+        print(f"\nPerformance comparison:")
+        print(f"Evaluator: {total_time:.3f} seconds")
+        print(results)
+
+    @pytest.mark.parametrize('dataset_split',
+                             ['random', 'date_split'])
+    @pytest.mark.parametrize('scorer',
+                             ['rmsd', 'posit'])
+    def test_serialization(self, docking_data_model, refs, ligs, dataset_split, random_split, date_split,
+                                   scorer, rmsd_scorer, posit_scorer, binary_evaluator):
+        ev = Evaluator(
+            dataset_split=random_split if dataset_split == 'random' else date_split,
+            scorer=rmsd_scorer if scorer == 'rmsd' else posit_scorer,
+            evaluator=binary_evaluator,
+            n_bootstraps=1000,
+        )
+        ev.to_json_file("test.json")
+        ev2 = Evaluator.from_json_file("test.json")
+        assert ev == ev2
+
 
 def test_settings():
     settings = Settings()
@@ -399,7 +527,7 @@ def test_create_evaluators_from_settings():
 
 
 def test_fraction_good():
-    fg = FractionGood(total=100, fraction=0.5, replicates=[0.5, 0.6, 0.7])
+    fg = SuccessRate(total=100, fraction=0.5, replicates=[0.5, 0.6, 0.7])
     assert fg.get_records() == {
         "Min": 0.5,
         "Max": 0.7,
@@ -410,54 +538,10 @@ def test_fraction_good():
     }
 
     with pytest.raises(ValueError):
-        FractionGood(total=100, fraction=1.1, replicates=[0.5, 0.6, 0.7, 0.8])
+        SuccessRate(total=100, fraction=1.1, replicates=[0.5, 0.6, 0.7, 0.8])
 
 
-def test_date_split():
-    ds = DateSplit(
-        reference_structure_column="help",
-        n_per_split=100,
-        date_dict={"s1": "2021-01-01"},
-        randomize_by_n_days=1,
-    )
 
-
-def test_serialization():
-    ev = Evaluator(
-        pose_selector=PoseSelector(
-            name="Default", variable="Pose_ID", number_to_return=1
-        ),
-        dataset_split=RandomSplit(reference_structure_column="help", n_per_split=100),
-        scorer=Scorer(
-            name="RMSD", variable="RMSD", higher_is_better=False, number_to_return=1
-        ),
-        evaluator=BinaryEvaluation(variable="RMSD", cutoff=2),
-        groupby=["Query_Ligand"],
-    )
-    ev.to_json_file("test.json")
-    ev2 = Evaluator.from_json_file("test.json")
-    assert ev == ev2
-
-    ev3 = Evaluator(
-        pose_selector=PoseSelector(
-            name="Default", variable="Pose_ID", number_to_return=1
-        ),
-        dataset_split=DateSplit(
-            reference_structure_column="help",
-            n_per_split=100,
-            date_dict={"s1": "2021-01-01"},
-            randomize_by_n_days=1,
-        ),
-        scorer=Scorer(
-            name="RMSD", variable="RMSD", higher_is_better=False, number_to_return=1
-        ),
-        evaluator=BinaryEvaluation(variable="RMSD", cutoff=2),
-        groupby=["Query_Ligand"],
-    )
-    ds = ev3.dataset_split
-    ev3.to_json_file("test.json")
-    ev4 = Evaluator.from_json_file("test.json")
-    assert ev3 == ev4
 
 
 @pytest.fixture
