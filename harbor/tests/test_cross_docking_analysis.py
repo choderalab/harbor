@@ -21,8 +21,13 @@ from harbor.analysis.cross_docking import (
     DataFrameType,
     DockingDataModel,
     SuccessRate,
-    EvaluatorFactory,
     get_unique_structures_randomized_by_date,
+    EvaluatorFactory,
+    PoseSelectionSettings,
+    ScorerSettings,
+    RMSDScorerSettings,
+    POSITScorerSettings,
+    ReferenceSplitSettings,
 )
 import pandas as pd
 import numpy as np
@@ -40,13 +45,13 @@ def setup_random_state():
 @pytest.fixture()
 def refs():
     """Sample reference structures fixture."""
-    return [f"PDB{i}" for i in range(1, 10)]
+    return [f"PDB{i}" for i in range(1, 500)]
 
 
 @pytest.fixture()
 def ligs():
     """Sample ligands fixture."""
-    return [f"LIG_{i}" for i in range(1, 10)]
+    return [f"LIG_{i}" for i in range(1, 500)]
 
 
 @pytest.fixture()
@@ -507,6 +512,68 @@ class TestEvaluator:
         ev.to_json_file("test.json")
         ev2 = Evaluator.from_json_file("test.json")
         assert ev == ev2
+
+class TestSettings:
+
+    def test_similarity_settings_roundtrip(self, tmpdir):
+        from harbor.analysis.cross_docking import SimilaritySplitSettings
+        default = SimilaritySplitSettings()
+        print(default)
+        fp = default.to_yaml_file(tmpdir / "settings.yaml")
+        loaded = SimilaritySplitSettings.from_yaml_file(fp)
+
+        assert default == loaded
+    def test_evaluator_factory_roundtrip(self, tmpdir):
+        evf = EvaluatorFactory()
+        print(evf)
+        fp = evf.to_yaml_file("settings.yaml")
+
+        loaded = EvaluatorFactory.from_yaml_file(fp)
+        fp2 = loaded.to_yaml_file("settings2.yaml")
+        loaded_again = EvaluatorFactory.from_yaml_file(fp2)
+        assert evf == loaded == loaded_again
+
+        evs = loaded.create_evaluators()
+        assert len(evs) == 2
+
+    def test_evaluator_factor_settings(self, docking_data_model, tmpdir):
+        evf = EvaluatorFactory()
+        evf.reference_split_settings.use = True
+        evf.reference_split_settings.date_split_settings.use = True
+        evf.reference_split_settings.date_split_settings.reference_structure_date_column = "Date"
+        evf.reference_split_settings.random_split_settings.use = True
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 4
+
+        evf = EvaluatorFactory()
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = "Query_Scaffold"
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = "Ref_Scaffold"
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 10
+
+        evf = EvaluatorFactory()
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = "Query_Scaffold"
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = "Ref_Scaffold"
+        evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = ScaffoldSplitOptions.X_TO_Y
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 40
+
+        evf = EvaluatorFactory()
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = "Query_Scaffold"
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = "Ref_Scaffold"
+        evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = ScaffoldSplitOptions.X_TO_NOT_X
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_min_count = 1
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_min_count = 1
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 10
+
+
 
 
 def test_settings():
