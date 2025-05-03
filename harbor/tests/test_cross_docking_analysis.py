@@ -23,11 +23,7 @@ from harbor.analysis.cross_docking import (
     SuccessRate,
     get_unique_structures_randomized_by_date,
     EvaluatorFactory,
-    PoseSelectionSettings,
-    ScorerSettings,
-    RMSDScorerSettings,
-    POSITScorerSettings,
-    ReferenceSplitSettings,
+    Results,
 )
 import pandas as pd
 import numpy as np
@@ -550,6 +546,29 @@ class TestEvaluator:
         ev.to_json_file("test.json")
         ev2 = Evaluator.from_json_file("test.json")
         assert ev == ev2
+
+
+def test_eval_on_local():
+    data = DockingDataModel.deserialize(
+        "/Users/alexpayne/Scientific_Projects/mers-drug-discovery/sars2-retrospective-analysis/ALL_combined_results.parquet"
+    )
+    evf = EvaluatorFactory()
+    evf.reference_split_settings.use = True
+    evf.reference_split_settings.date_split_settings.use = True
+    evf.reference_split_settings.date_split_settings.reference_structure_date_column = (
+        "Reference_Structure_Date"
+    )
+    evf.reference_split_settings.random_split_settings.use = True
+    evf.scorer_settings.rmsd_scorer_settings.use = True
+    evf.scorer_settings.posit_scorer_settings.use = True
+
+    evf.reference_split_settings.update_reference_settings.use = True
+    evf.reference_split_settings.update_reference_settings.use_logarithmic_scaling = (
+        True
+    )
+    evs = evf.create_evaluators(docking_data_model)
+
+    results = Results.calculate_results(docking_data_model, evs[0:2])
 
 
 class TestSettings:

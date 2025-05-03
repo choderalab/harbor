@@ -1520,7 +1520,7 @@ class EvaluatorFactory(SettingsBase):
             reference_splits.extend(
                 [
                     RandomSplit(
-                        reference_structure_column=self.reference_ligand_column,
+                        reference_structure_column=self.reference_structure_column,
                         n_reference_structures=i,
                     )
                     for i in self.reference_split_settings.n_reference_structures
