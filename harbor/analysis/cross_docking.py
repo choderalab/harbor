@@ -267,6 +267,12 @@ class DockingDataModel(DataFrameModelBase):
     def get_total_poses(self) -> int:
         return len(self.dataframe.groupby(self.get_pose_data_columns()))
 
+    def get_lig_dataframe(self) -> pd.DataFrame:
+        return self.dataframe.groupby(self.get_lig_column()).head(1)
+
+    def get_ref_dataframe(self) -> pd.DataFrame:
+        return self.dataframe.groupby(self.get_ref_column()).head(1)
+
     @classmethod
     def from_models(cls, data_models) -> "DockingDataModel":
         from functools import reduce
@@ -1564,10 +1570,12 @@ class EvaluatorFactory(SettingsBase):
                 scaffold_settings.query_scaffold_min_count
                 or scaffold_settings.reference_scaffold_min_count
             ):
-                query_counts = data.dataframe[
+                lig_data = data.get_lig_dataframe()
+                ref_data = data.get_ref_dataframe()
+                query_counts = lig_data[
                     scaffold_settings.query_scaffold_id_column
                 ].value_counts()
-                ref_counts = data.dataframe[
+                ref_counts = ref_data[
                     scaffold_settings.reference_scaffold_id_column
                 ].value_counts()
 
