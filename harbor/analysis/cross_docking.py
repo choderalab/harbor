@@ -536,7 +536,7 @@ class DateSplit(ReferenceStructureSplitBase):
     def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
         unique_refs = data.dataframe[self.reference_structure_column].unique()
         if self.n_reference_structures is None or self.n_reference_structures == len(
-                unique_refs
+            unique_refs
         ):
             # then we're returning everything, so no differences
             return [data]
