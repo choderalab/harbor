@@ -316,9 +316,8 @@ class ModelBase(BaseModel):
     def plot_name(self) -> str:
         pass
 
-    @abc.abstractmethod
     def get_records(self) -> dict:
-        pass
+        return {}
 
 
 class EmptyModel(ModelBase):
@@ -326,20 +325,6 @@ class EmptyModel(ModelBase):
 
     def plot_name(self) -> str:
         return ""
-
-    def get_records(self) -> dict:
-        return {}
-
-
-class EmptyDataframeModel(EmptyModel):
-    """
-    A model that does nothing to the dataframe.
-    """
-
-    type_: str = Field("EmptyDataframeModel", description="Empty dataframe model")
-
-    def run(self, df: pd.DataFrame) -> pd.DataFrame:
-        return df
 
 
 class SplitBase(ModelBase):
@@ -359,24 +344,12 @@ class SplitBase(ModelBase):
     )
 
     @abc.abstractmethod
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+    def run(self, data: DockingDataModel) -> [DockingDataModel]:
         pass
 
     @property
     def plot_name(self) -> str:
         return f"{self.name}"
-
-    def get_records(self) -> dict:
-        if self.split_level == 0:
-            return self._get_records()
-        else:
-            return {
-                f"{k}_{self.split_level}": v for k, v in self._get_records().items()
-            }
-
-    @abc.abstractmethod
-    def _get_records(self) -> dict:
-        pass
 
 
 class ReferenceStructureSplitBase(SplitBase):
@@ -391,9 +364,9 @@ class ReferenceStructureSplitBase(SplitBase):
         None, description="Number of values per split to generate"
     )
 
-    def _get_records(self) -> dict:
+    def get_records(self) -> dict:
         return {
-            "Split": self.name,
+            "Reference_Split": self.name,
             "N_Reference_Structures": self.n_reference_structures,
             "Reference_Structure_Column": self.reference_structure_column,
         }
@@ -533,6 +506,16 @@ class DateSplit(ReferenceStructureSplitBase):
         description="Randomize the structures by n days. If 0 no randomization is done. If 1 or greater, for each structure, it can be randomly replaced by any other structure collected on that day or n-1 days from it's collection date.",
     )
 
+    def get_records(self) -> dict:
+        records = super().get_records()
+        records.update(
+            {
+                "Randomize_by_N_Days": self.randomize_by_n_days,
+                "Date_Column": self.date_column,
+            }
+        )
+        return records
+
     def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
         unique_refs = data.dataframe[self.reference_structure_column].unique()
         if self.n_reference_structures is None or self.n_reference_structures == len(
@@ -560,7 +543,17 @@ class DateSplit(ReferenceStructureSplitBase):
         ]
 
 
-class SimilaritySplit(SplitBase):
+class PairwiseSplitBase(SplitBase):
+    name: str = "PairwiseSplitBase"
+    type_: str = "PairwiseSplitBase"
+
+    def get_records(self) -> dict:
+        records = super().get_records()
+        records.update({"PairwiseSplit": self.name})
+        return records
+
+
+class SimilaritySplit(PairwiseSplitBase):
     """
     Splits the structures available to dock to by similarity to the query ligand
     """
@@ -616,17 +609,20 @@ class SimilaritySplit(SplitBase):
         df = df.groupby(self.query_ligand_column).head(self.n_per_split)
         return [df]
 
-    def _get_records(self) -> dict:
-        return_dict = {
-            "Split": self.name,
-            "N_Per_Split": self.n_per_split,
-            "Split_Variable": self.similarity_column,
-            "Similarity_Threshold": self.threshold,
-            "Include_Similar": self.include_similar,
-            "Higher_Is_More_Similar": self.higher_is_more_similar,
-        }
-        return_dict.update({key: value for key, value in self.groupby.items()})
-        return return_dict
+    def get_records(self) -> dict:
+        records = super().get_records()
+        records.update(
+            {
+                "Split": self.name,
+                "N_Per_Split": self.n_per_split,
+                "Split_Variable": self.similarity_column,
+                "Similarity_Threshold": self.threshold,
+                "Include_Similar": self.include_similar,
+                "Higher_Is_More_Similar": self.higher_is_more_similar,
+            }
+        )
+        records.update({key: value for key, value in self.groupby.items()})
+        return records
 
 
 class ScaffoldSplitFlags(Flag):
@@ -695,7 +691,7 @@ class ScaffoldSplitOptions(StrEnum):
         }[self]
 
 
-class ScaffoldSplit(SplitBase):
+class ScaffoldSplit(PairwiseSplitBase):
     """
     Splits the structures available to dock to by whether they share a scaffold with the query ligand.
     """
@@ -728,16 +724,18 @@ class ScaffoldSplit(SplitBase):
             return v.value
         return v
 
-    def _get_records(self) -> dict:
-        return_dict = {
-            "Split": self.name,
-            "Query_Scaffold_ID_Column": self.query_scaffold_id_column,
-            "Reference_Scaffold_ID_Column": self.reference_scaffold_id_column,
-            "Split_Option": self.split_option,
-            "Query_Scaffold_ID_Subset": self.query_scaffold_id_subset,
-            "Reference_Scaffold_ID_Subset": self.reference_scaffold_id_subset,
-        }
-        return return_dict
+    def get_records(self) -> dict:
+        records = super().get_records()
+        records.update(
+            {
+                "Query_Scaffold_ID_Column": self.query_scaffold_id_column,
+                "Reference_Scaffold_ID_Column": self.reference_scaffold_id_column,
+                "Scaffold_Split_Option": self.split_option,
+                "Query_Scaffold_ID_Subset": self.query_scaffold_id_subset,
+                "Reference_Scaffold_ID_Subset": self.reference_scaffold_id_subset,
+            }
+        )
+        return records
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -1203,16 +1201,18 @@ class Results(BaseModel):
         return mydict
 
     @classmethod
-    def calculate_result(cls, evaluator: Evaluator, df: pd.DataFrame) -> "Results":
-        result = evaluator.run(df)
+    def calculate_result(
+        cls, evaluator: Evaluator, data: DockingDataModel
+    ) -> "Results":
+        result = evaluator.run(data)
         return cls(evaluator=evaluator, success_rate=result)
 
     @classmethod
     def calculate_results(
-        cls, df: pd.DataFrame, evaluators: list["Evaluator"]
+        cls, data: DockingDataModel, evaluators: list[Evaluator]
     ) -> list["Results"]:
         for ev in tqdm(evaluators):
-            result = ev.run(df)
+            result = ev.run(data)
             yield cls(evaluator=ev, success_rate=result)
 
     @classmethod

@@ -566,9 +566,12 @@ def test_eval_on_local():
     evf.reference_split_settings.update_reference_settings.use_logarithmic_scaling = (
         True
     )
-    evs = evf.create_evaluators(docking_data_model)
+    evs = evf.create_evaluators(data)
 
-    results = Results.calculate_results(docking_data_model, evs[0:2])
+    results = Results.calculate_results(data, evs[0:2])
+
+    df = Results.df_from_results(results)
+    assert len(df) == 2
 
 
 class TestSettings:
@@ -652,6 +655,166 @@ class TestSettings:
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_min_count = 1
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
+
+
+class TestResults:
+    @pytest.fixture
+    def sample_results(self):
+        """Create sample results for testing."""
+        return [
+            Results(
+                evaluator=Evaluator(
+                    dataset_split=RandomSplit(
+                        reference_structure_column="Reference_Structure",
+                        n_reference_structures=5,
+                    ),
+                    scorer=RMSDScorer(),
+                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    n_bootstraps=100,
+                ),
+                success_rate=SuccessRate(
+                    total=100, fraction=0.5, replicates=[0.4, 0.5, 0.6]
+                ),
+            ),
+            Results(
+                evaluator=Evaluator(
+                    dataset_split=RandomSplit(
+                        reference_structure_column="Reference_Structure",
+                        n_reference_structures=10,
+                    ),
+                    scorer=RMSDScorer(),
+                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    n_bootstraps=100,
+                ),
+                success_rate=SuccessRate(
+                    total=100, fraction=0.6, replicates=[0.5, 0.6, 0.7]
+                ),
+            ),
+            Results(
+                evaluator=Evaluator(
+                    similarity_split=ScaffoldSplit(
+                        query_scaffold_id_column="Query_Scaffold",
+                        reference_scaffold_id_column="Ref_Scaffold",
+                        split_option=ScaffoldSplitOptions.X_TO_X,
+                        query_scaffold_id_subset=["Scaffold_1"],
+                        reference_scaffold_id_subset=["Scaffold_1"],
+                    ),
+                    scorer=RMSDScorer(),
+                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    n_bootstraps=100,
+                ),
+                success_rate=SuccessRate(
+                    total=100, fraction=0.6, replicates=[0.5, 0.6, 0.7]
+                ),
+            ),
+        ]
+
+    def test_df_from_results(self, sample_results):
+        """Test converting results to DataFrame."""
+        df = Results.df_from_results(sample_results)
+
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 3
+        assert all(
+            [
+                col in df.columns
+                for col in [
+                    "Bootstraps",
+                    "Score",
+                    "Score_Choose_N",
+                    "EvaluationMetric",
+                    "EvaluationMetric_Cutoff",
+                    "PoseSelection",
+                    "PoseSelection_Choose_N",
+                    "Reference_Split",
+                    "N_Reference_Structures",
+                    "Reference_Structure_Column",
+                    "Min",
+                    "Max",
+                    "CI_Upper",
+                    "CI_Lower",
+                    "Total",
+                    "Fraction",
+                    "PairwiseSplit",
+                    "Query_Scaffold_ID_Column",
+                    "Reference_Scaffold_ID_Column",
+                    "Scaffold_Split_Option",
+                    "Query_Scaffold_ID_Subset",
+                    "Reference_Scaffold_ID_Subset",
+                ]
+            ]
+        )
+
+    def test_calculate_results(self, docking_data_model):
+        """Test calculating results from evaluators."""
+        evaluators = [
+            Evaluator(
+                dataset_split=RandomSplit(
+                    reference_structure_column="Reference_Structure",
+                    n_reference_structures=5,
+                ),
+                scorer=RMSDScorer(),
+                evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                n_bootstraps=100,
+            )
+        ]
+
+        results = Results.calculate_results(docking_data_model, evaluators)
+
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert isinstance(results[0], tuple)
+        assert isinstance(results[0][0], Evaluator)
+        assert isinstance(results[0][1], SuccessRate)
+
+    def test_results_to_json(self, sample_results, tmpdir):
+        """Test saving results to JSON."""
+        output_file = tmpdir / "results.json"
+        Results.results_to_json(sample_results, output_file)
+
+        assert output_file.exists()
+
+        # Load and verify JSON content
+        import json
+
+        with open(output_file) as f:
+            data = json.load(f)
+
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert "evaluator" in data[0]
+        assert "success_rate" in data[0]
+
+    def test_results_from_json(self, sample_results, tmpdir):
+        """Test loading results from JSON."""
+        output_file = tmpdir / "results.json"
+        Results.results_to_json(sample_results, output_file)
+
+        loaded_results = Results.results_from_json(output_file)
+
+        assert len(loaded_results) == len(sample_results)
+        assert isinstance(loaded_results[0][0], Evaluator)
+        assert isinstance(loaded_results[0][1], SuccessRate)
+
+    def test_df_to_latex(self, sample_results):
+        """Test converting results DataFrame to LaTeX."""
+        df = Results.df_from_results(sample_results)
+        latex = Results.df_to_latex(df)
+
+        assert isinstance(latex, str)
+        assert "\\begin{tabular}" in latex
+        assert "\\end{tabular}" in latex
+        assert "Fraction" in latex
+
+    def test_plot_results(self, sample_results):
+        """Test plotting results."""
+        import matplotlib.pyplot as plt
+
+        df = Results.df_from_results(sample_results)
+        fig = Results.plot_results(df)
+
+        assert isinstance(fig, plt.Figure)
+        plt.close(fig)
 
 
 def test_settings():
