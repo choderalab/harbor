@@ -759,13 +759,14 @@ class TestResults:
             )
         ]
 
-        results = Results.calculate_results(docking_data_model, evaluators)
+        results = [
+            results
+            for results in Results.calculate_results(docking_data_model, evaluators)
+        ]
 
         assert isinstance(results, list)
         assert len(results) == 1
-        assert isinstance(results[0], tuple)
-        assert isinstance(results[0][0], Evaluator)
-        assert isinstance(results[0][1], SuccessRate)
+        assert isinstance(results[0], Results)
 
     def test_results_to_json(self, sample_results, tmpdir):
         """Test saving results to JSON."""

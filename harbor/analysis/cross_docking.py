@@ -817,7 +817,7 @@ class ScaffoldSplit(PairwiseSplitBase):
 
         return self
 
-    def run(self, data: DockingDataModel) -> [DockingDataModel]:
+    def run(self, data: DockingDataModel) -> DockingDataModel:
         """Split data based on scaffold relationships."""
         df = data.dataframe
         # set scaffold subsets if not provided
@@ -851,7 +851,7 @@ class ScaffoldSplit(PairwiseSplitBase):
                 df[self.query_scaffold_id_column]
                 != df[self.reference_scaffold_id_column]
             ]
-        return [DockingDataModel(dataframe=df, **data.model_dump())]
+        return DockingDataModel(dataframe=df, **data.model_dump())
 
 
 # TODO: There might be a better way to do this.
