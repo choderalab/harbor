@@ -1205,7 +1205,7 @@ class Results(BaseModel):
     @classmethod
     def calculate_result(cls, evaluator: Evaluator, df: pd.DataFrame) -> "Results":
         result = evaluator.run(df)
-        return cls(evaluator=evaluator, fraction_good=result)
+        return cls(evaluator=evaluator, success_rate=result)
 
     @classmethod
     def calculate_results(
@@ -1213,7 +1213,7 @@ class Results(BaseModel):
     ) -> list["Results"]:
         for ev in tqdm(evaluators):
             result = ev.run(df)
-            yield cls(evaluator=ev, fraction_good=result)
+            yield cls(evaluator=ev, success_rate=result)
 
     @classmethod
     def df_from_results(cls, results: list["Results"]) -> pd.DataFrame:
