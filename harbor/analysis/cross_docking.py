@@ -494,12 +494,15 @@ class RandomSplit(ReferenceStructureSplitBase):
     type_: str = "RandomSplit"
 
     def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
-        if self.n_reference_structures is None:
+        unique_refs = data.dataframe[self.reference_structure_column].unique()
+        if self.n_reference_structures is None or self.n_reference_structures == len(
+            unique_refs
+        ):
             # then we're returning everything, so no differences
             return [data]
         else:
             random_ref_samples = generate_random_samples(
-                data.dataframe[self.reference_structure_column].unique(),
+                unique_refs,
                 n_values=self.n_reference_structures,
                 n_samples=bootstraps,
             )
@@ -531,10 +534,12 @@ class DateSplit(ReferenceStructureSplitBase):
     )
 
     def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
-
-        if self.n_reference_structures is None:
+        unique_refs = data.dataframe[self.reference_structure_column].unique()
+        if self.n_reference_structures is None or self.n_reference_structures == len(
+                unique_refs
+        ):
             # then we're returning everything, so no differences
-            return [data for _ in range(bootstraps)]
+            return [data]
 
         ref_lists = get_unique_structures_randomized_by_date(
             data.dataframe,
