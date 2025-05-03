@@ -1474,6 +1474,7 @@ def generate_logarithmic_scale(n_max: int, base: int = 10) -> list[int]:
 
 
 class EvaluatorFactory(SettingsBase):
+    name: str = Field(..., help="Name of this collection of settings")
     pose_selection_settings: PoseSelectionSettings = Field(PoseSelectionSettings())
     reference_split_settings: ReferenceSplitSettings = Field(ReferenceSplitSettings())
     pairwise_split_settings: PairwiseSplitSettings = Field(PairwiseSplitSettings())
