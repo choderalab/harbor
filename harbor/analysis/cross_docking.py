@@ -1501,6 +1501,22 @@ class EvaluatorFactory(SettingsBase):
         description="Name of the column to distinguish reference structures by",
     )
 
+    def to_yaml_file(self, directory: Path = Path("./")) -> Path:
+        # Convert to YAML
+        output = self.to_yaml()
+        descriptions = self.get_descriptions()
+
+        # Write to file with descriptions as a block comment at the top
+        file_path = directory / f"{self.name}.yaml"
+        with open(file_path, "w") as file:
+            for key, value in output.items():
+                if key in descriptions:
+                    file.write(f"# {key}: {descriptions[key]}\n")
+
+            # then write out full object
+            yaml.dump(output, file, sort_keys=False)
+        return file_path
+
     def create_pose_selectors(self) -> list[PoseSelector]:
         return [
             PoseSelector(
