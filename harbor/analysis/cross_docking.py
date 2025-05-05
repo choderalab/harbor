@@ -566,12 +566,15 @@ class SimilaritySplit(PairwiseSplitBase):
 
     name: str = "SimilaritySplit"
     type_: str = "SimilaritySplit"
+    n_reference_structures: Optional[int] = Field(
+        None, description="Number of values per split to generate"
+    )
     similarity_column: str = Field(
         ...,
         description="Column name for the similarity between the query and reference ligands",
     )
     groupby: dict = Field(
-        ...,
+        {},
         description="Column name : value pairs to group the Tanimoto similarity data by.",
     )
     query_ligand_column: str = Field(
@@ -593,11 +596,12 @@ class SimilaritySplit(PairwiseSplitBase):
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
-        if self.n_per_split != -1:
+        if self.n_reference_structures != -1:
             self.deterministic = False
         return self
 
-    def run(self, df: pd.DataFrame) -> [pd.DataFrame]:
+    def run(self, data: DockingDataModel, bootstraps=1) -> [pd.DataFrame]:
+        df = data.dataframe
 
         # first just get the necessary data
         for key, value in self.groupby.items():
@@ -612,16 +616,29 @@ class SimilaritySplit(PairwiseSplitBase):
             df = df[df[self.similarity_column] <= self.threshold]
 
         # finally, group by the query ligand column and randomly sample from the top N structures
-        df = df.groupby(self.query_ligand_column).head(self.n_per_split)
-        return [df]
+        return [
+            DockingDataModel(
+                dataframe=(
+                    df.groupby(self.query_ligand_column)
+                    .apply(
+                        lambda x: (
+                            x
+                            if len(x) <= self.n_reference_structures
+                            else x.sample(n=self.n_reference_structures)
+                        )
+                    )
+                    .reset_index(drop=True)
+                ),
+                **data.model_dump(),
+            )
+            for _ in range(bootstraps)
+        ]
 
     def get_records(self) -> dict:
         records = super().get_records()
         records.update(
             {
-                "Split": self.name,
-                "N_Per_Split": self.n_per_split,
-                "Split_Variable": self.similarity_column,
+                "Similarity_Column": self.similarity_column,
                 "Similarity_Threshold": self.threshold,
                 "Include_Similar": self.include_similar,
                 "Higher_Is_More_Similar": self.higher_is_more_similar,
@@ -817,7 +834,7 @@ class ScaffoldSplit(PairwiseSplitBase):
 
         return self
 
-    def run(self, data: DockingDataModel) -> DockingDataModel:
+    def run(self, data: DockingDataModel) -> [DockingDataModel]:
         """Split data based on scaffold relationships."""
         df = data.dataframe
         # set scaffold subsets if not provided
@@ -851,7 +868,7 @@ class ScaffoldSplit(PairwiseSplitBase):
                 df[self.query_scaffold_id_column]
                 != df[self.reference_scaffold_id_column]
             ]
-        return DockingDataModel(dataframe=df, **data.model_dump())
+        return [DockingDataModel(dataframe=df, **data.model_dump())]
 
 
 # TODO: There might be a better way to do this.
@@ -1127,7 +1144,9 @@ class Evaluator(ModelBase):
     ) -> [DockingDataModel]:
         if self.similarity_split is not None:
             data_splits: list[DockingDataModel] = [
-                self.similarity_split.run(data_) for data_ in data_splits
+                split
+                for data_ in data_splits
+                for split in self.similarity_split.run(data_)
             ]
         return data_splits
 
@@ -1371,6 +1390,13 @@ class SimilaritySplitSettings(EvaluatorSettingsBase):
     similarity_column_name: Optional[str] = Field("Tanimoto")
     similarity_range: list[float] = Field([0, 1])
     similarity_n_thresholds: int = Field(21)
+    similarity_groupby_dict: dict = {}
+    higher_is_more_similar: bool = True
+    include_similar: bool = True
+    n_reference_structures: Optional[list[None | int]] = Field(
+        [None], description="List of number of structures to try"
+    )
+    update_reference_settings: UpdateReferenceSettings = UpdateReferenceSettings()
 
     def get_similarity_thresholds(self) -> np.ndarray:
         """
@@ -1667,9 +1693,35 @@ class EvaluatorFactory(SettingsBase):
 
         # Handle similarity splits (if implemented)
         if settings.similarity_split_settings.use:
-            # Add similarity split implementation here
-            pass
+            sim_settings = settings.similarity_split_settings
 
+            # updated n_refs if passed
+            if sim_settings.update_reference_settings.use:
+                if sim_settings.update_reference_settings.use_logarithmic_scaling:
+                    number_of_refs = len(data.get_unique_refs())
+                    sim_settings.n_reference_structures = generate_logarithmic_scale(
+                        n_max=number_of_refs,
+                        base=sim_settings.update_reference_settings.log_base,
+                    )
+                else:
+                    raise NotImplementedError
+
+            # Add similarity split implementation here
+            splits.extend(
+                [
+                    SimilaritySplit(
+                        n_reference_structures=refs,
+                        threshold=threshold,
+                        similarity_column=sim_settings.similarity_column_name,
+                        groupby=sim_settings.similarity_groupby_dict,
+                        higher_is_more_similar=sim_settings.higher_is_more_similar,
+                        include_similar=sim_settings.include_similar,
+                        query_ligand_column=self.query_ligand_column,
+                    )
+                    for refs in settings.similarity_split_settings.n_reference_structures
+                    for threshold in settings.similarity_split_settings.get_similarity_thresholds()
+                ]
+            )
         return splits
 
     def create_scorers(self) -> list[Scorer]:

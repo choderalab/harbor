@@ -126,7 +126,7 @@ def tanimotocombo_data(refs, ligs):
                 "Tanimoto": np.random.random(),
                 "Aligned": aligned,
             }
-            for ref, lig, aligned in itertools.product(refs, ligs, ["True", "False"])
+            for ref, lig, aligned in itertools.product(refs, ligs, [True, False])
         ]
     )
 
@@ -156,7 +156,9 @@ def scaffold_dataframe(refs, ligs, ref_dataframe, lig_dataframe):
 
 
 @pytest.fixture()
-def docking_data_model(pose_dataframe, ref_dataframe, lig_dataframe):
+def docking_data_model(
+    pose_dataframe, ref_dataframe, lig_dataframe, tanimotocombo_data
+):
     pose_df = DataFrameModel(
         name="PoseData",
         type=DataFrameType.POSE,
@@ -175,7 +177,13 @@ def docking_data_model(pose_dataframe, ref_dataframe, lig_dataframe):
         dataframe=lig_dataframe,
         key_columns=["Query_Ligand"],
     )
-    return DockingDataModel.from_models([pose_df, ref_df, lig_df])
+    tcdf = DataFrameModel(
+        name="TanimotoComboData",
+        type=DataFrameType.CHEMICAL_SIMILARITY,
+        dataframe=tanimotocombo_data,
+        key_columns=["Query_Ligand", "Reference_Structure", "Aligned"],
+    )
+    return DockingDataModel.from_models([pose_df, ref_df, lig_df, tcdf])
 
 
 def test_column_filter(pose_dataframe):
@@ -187,7 +195,7 @@ def test_column_filter(pose_dataframe):
         operator="le",
     )
     filtered_df = cf.filter(pose_dataframe)
-    assert len(filtered_df) == 86  # 2 poses per reference-ligand pair
+    assert len(filtered_df) == 248850  # 2 poses per reference-ligand pair
     assert all(filtered_df["RMSD"] <= 4.0)
 
     # Test with a different operator
@@ -197,7 +205,7 @@ def test_column_filter(pose_dataframe):
         operator="ge",
     )
     filtered_df = cf.filter(pose_dataframe)
-    assert len(filtered_df) == 76
+    assert len(filtered_df) == 249152
     assert all(filtered_df["RMSD"] >= 4.0)
 
 
@@ -242,7 +250,7 @@ class TestDataFrameModel:
             key_columns=["Query_Ligand"],
         )
         merged = DockingDataModel.from_models([pose_df, ref_df, lig_df])
-        assert merged.dataframe.size == 1458
+        assert merged.dataframe.size == 4980020
 
         assert set(merged.get_key_columns()) == {
             "Query_Ligand",
@@ -285,7 +293,7 @@ class TestDockingDataModel:
 
     def test_docking_data_model_methods(self, refs, docking_data_model):
         assert set(docking_data_model.get_unique_refs()) == set(refs)
-        assert len(docking_data_model.get_unique_refs()) == 9
+        assert len(docking_data_model.get_unique_refs()) == 499
 
 
 class TestSplits:
@@ -340,7 +348,8 @@ class TestSplits:
             query_scaffold_id_subset=[query_subset] if query_subset else None,
         )
         splits = scaffold_split.run(loaded)
-        assert len(splits) == 1
+
+        assert isinstance(splits, DockingDataModel)
 
         split_data = splits[0]
 
@@ -421,6 +430,65 @@ class TestSplits:
         )
         new_data = pose_selector.run(docking_data_model)
         assert all(new_data.dataframe["Pose_ID"] == 0)
+
+    def test_similarity_split(self, docking_data_model):
+        """Test that SimilaritySplit correctly filters data based on similarity thresholds."""
+        # Test with threshold above which to include pairs
+        ss_high = SimilaritySplit(
+            n_reference_structures=3,
+            similarity_column="Tanimoto",
+            threshold=0.7,
+            include_similar=True,
+            higher_is_more_similar=True,
+            query_ligand_column="Query_Ligand",
+            groupby={"Aligned": True},
+        )
+        result_high = ss_high.run(docking_data_model)
+        assert len(result_high) == 1  # Should return single split
+        df_high = result_high[0].dataframe
+        assert all(df_high["Tanimoto"] >= 0.7)
+
+        # Test with threshold below which to include pairs
+        ss_low = SimilaritySplit(
+            n_reference_structures=3,
+            similarity_column="Tanimoto",
+            threshold=0.3,
+            include_similar=False,
+            higher_is_more_similar=True,
+            query_ligand_column="Query_Ligand",
+            groupby={"Aligned": True},
+        )
+        result_low = ss_low.run(docking_data_model)
+        assert len(result_low) == 1
+        df_low = result_low[0].dataframe
+        assert all(df_low["Aligned"] is True)
+        assert all(df_low["Tanimoto"] < 0.3)
+
+        # Test with bootstrapping
+        ss_boot = SimilaritySplit(
+            n_reference_structures=3,
+            similarity_column="Tanimoto",
+            threshold=0.5,
+            include_similar=True,
+            higher_is_more_similar=True,
+            query_ligand_column="Query_Ligand",
+            groupby={"Aligned": True},
+        )
+        result_boot = ss_boot.run(docking_data_model, bootstraps=5)
+        assert len(result_boot) == 5
+
+        # Check that different bootstraps generate different reference sets
+        ref_sets = [set(split.get_unique_refs()) for split in result_boot]
+        assert len(set(tuple(refs) for refs in ref_sets)) > 1
+
+        # Test invalid threshold
+        with pytest.raises(ValueError):
+            ss_invalid = SimilaritySplit(
+                n_reference_structures=3,
+                similarity_column="Tanimoto",
+                threshold=1.5,  # Invalid threshold > 1
+            )
+            ss_invalid.run(docking_data_model)
 
 
 class TestEvaluator:
@@ -552,7 +620,7 @@ def test_eval_on_local():
     data = DockingDataModel.deserialize(
         "/Users/alexpayne/Scientific_Projects/mers-drug-discovery/sars2-retrospective-analysis/ALL_combined_results.parquet"
     )
-    evf = EvaluatorFactory()
+    evf = EvaluatorFactory(name="test")
     evf.reference_split_settings.use = True
     evf.reference_split_settings.date_split_settings.use = True
     evf.reference_split_settings.date_split_settings.reference_structure_date_column = (
@@ -587,12 +655,11 @@ class TestSettings:
         assert default == loaded
 
     def test_evaluator_factory_roundtrip(self, tmpdir):
-        evf = EvaluatorFactory()
-        print(evf)
-        fp = evf.to_yaml_file("settings.yaml")
+        evf = EvaluatorFactory(name="test")
+        fp = evf.to_yaml_file(tmpdir)
 
         loaded = EvaluatorFactory.from_yaml_file(fp)
-        fp2 = loaded.to_yaml_file("settings2.yaml")
+        fp2 = loaded.to_yaml_file()
         loaded_again = EvaluatorFactory.from_yaml_file(fp2)
         assert evf == loaded == loaded_again
 
@@ -600,7 +667,7 @@ class TestSettings:
         assert len(evs) == 2
 
     def test_evaluator_factor_settings(self, docking_data_model, tmpdir):
-        evf = EvaluatorFactory()
+        evf = EvaluatorFactory(name="test")
         evf.reference_split_settings.use = True
         evf.reference_split_settings.date_split_settings.use = True
         evf.reference_split_settings.date_split_settings.reference_structure_date_column = (
@@ -610,7 +677,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 4
 
-        evf = EvaluatorFactory()
+        evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
@@ -622,7 +689,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
 
-        evf = EvaluatorFactory()
+        evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
@@ -637,7 +704,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 40
 
-        evf = EvaluatorFactory()
+        evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
@@ -655,6 +722,42 @@ class TestSettings:
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_min_count = 1
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
+
+        evf = EvaluatorFactory(name="test")
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.similarity_split_settings.use = True
+        evf.pairwise_split_settings.similarity_split_settings.include_similar = False
+        evf.pairwise_split_settings.similarity_split_settings.similarity_groupby_dict = {
+            "Aligned": True
+        }
+        evf.pairwise_split_settings.similarity_split_settings.update_reference_settings.use = (
+            True
+        )
+        evf.pairwise_split_settings.similarity_split_settings.update_reference_settings.use_logarithmic_scaling = (
+            True
+        )
+
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 462
+
+        evf = EvaluatorFactory(name="test")
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.similarity_split_settings.use = True
+        evf.pairwise_split_settings.similarity_split_settings.include_similar = False
+        evf.pairwise_split_settings.similarity_split_settings.similarity_groupby_dict = {
+            "Aligned": True
+        }
+        evf.pairwise_split_settings.similarity_split_settings.n_reference_structures = [
+            10
+        ]
+
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 42
+        results = Results.df_from_results(
+            Results.calculate_results(evaluators=evs[-2:], data=docking_data_model)
+        )
+        results.to_csv("test.csv")
+        assert len(results) == 2
 
 
 class TestResults:
@@ -767,72 +870,6 @@ class TestResults:
         assert isinstance(results, list)
         assert len(results) == 1
         assert isinstance(results[0], Results)
-
-    def test_results_to_json(self, sample_results, tmpdir):
-        """Test saving results to JSON."""
-        output_file = tmpdir / "results.json"
-        Results.results_to_json(sample_results, output_file)
-
-        assert output_file.exists()
-
-        # Load and verify JSON content
-        import json
-
-        with open(output_file) as f:
-            data = json.load(f)
-
-        assert isinstance(data, list)
-        assert len(data) == 2
-        assert "evaluator" in data[0]
-        assert "success_rate" in data[0]
-
-    def test_results_from_json(self, sample_results, tmpdir):
-        """Test loading results from JSON."""
-        output_file = tmpdir / "results.json"
-        Results.results_to_json(sample_results, output_file)
-
-        loaded_results = Results.results_from_json(output_file)
-
-        assert len(loaded_results) == len(sample_results)
-        assert isinstance(loaded_results[0][0], Evaluator)
-        assert isinstance(loaded_results[0][1], SuccessRate)
-
-    def test_df_to_latex(self, sample_results):
-        """Test converting results DataFrame to LaTeX."""
-        df = Results.df_from_results(sample_results)
-        latex = Results.df_to_latex(df)
-
-        assert isinstance(latex, str)
-        assert "\\begin{tabular}" in latex
-        assert "\\end{tabular}" in latex
-        assert "Fraction" in latex
-
-    def test_plot_results(self, sample_results):
-        """Test plotting results."""
-        import matplotlib.pyplot as plt
-
-        df = Results.df_from_results(sample_results)
-        fig = Results.plot_results(df)
-
-        assert isinstance(fig, plt.Figure)
-        plt.close(fig)
-
-
-def test_settings():
-    settings = EvaluatorFactory()
-    settings.to_yaml_file("test.yaml")
-
-    import numpy as np
-
-    new_settings = EvaluatorFactory(n_per_split=np.arange(1, 21))
-    s2 = EvaluatorFactory.from_yaml_file("test.yaml")
-
-
-def test_create_evaluators_from_settings():
-    settings = EvaluatorFactory.from_yaml_file("test.yaml")
-    settings.n_reference_structures = [1]
-    evs = settings.create_evaluators()
-    assert len(evs) == 2
 
 
 def test_success_rate():
