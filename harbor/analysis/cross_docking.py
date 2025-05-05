@@ -638,6 +638,7 @@ class SimilaritySplit(PairwiseSplitBase):
         records = super().get_records()
         records.update(
             {
+                "N_Reference_Structures": self.n_reference_structures,
                 "Similarity_Column": self.similarity_column,
                 "Similarity_Threshold": self.threshold,
                 "Include_Similar": self.include_similar,
