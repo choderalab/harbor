@@ -1252,6 +1252,7 @@ class Results(BaseModel):
         for data, ev in tqdm(zip(data_copies, evaluators)):
             result = ev.run(data)
             results.append(cls(evaluator=ev, success_rate=result))
+        return results
 
     @classmethod
     def df_from_results(
