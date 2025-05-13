@@ -1180,10 +1180,18 @@ class Evaluator(ModelBase):
         else:
             return v
 
+    def to_json_str(self) -> str:
+        return self.model_dump_json()
+
     def to_json_file(self, file_path: str | Path) -> Path:
         with open(file_path, "w") as f:
-            f.write(self.model_dump_json())
+            f.write(self.to_json_str())
         return file_path
+
+    @classmethod
+    def from_json_str(cls, model_dump_json_str) -> "Evaluator":
+        data = json.loads(model_dump_json_str)
+        return cls(**data)
 
     @classmethod
     def from_json_file(cls, file_path: str | Path) -> "Evaluator":
@@ -1246,7 +1254,18 @@ class Results(BaseModel):
             results.append(cls(evaluator=ev, success_rate=result))
 
     @classmethod
-    def df_from_results(cls, results: list["Results"]) -> pd.DataFrame:
+    def df_from_results(
+        cls, results: list["Results"], include_model=True
+    ) -> pd.DataFrame:
+        if include_model:
+            return pd.DataFrame.from_records(
+                [
+                    result.get_records().update(
+                        {"Evaluator_Model": result.evaluator.to_json_str()}
+                    )
+                    for result in results
+                ]
+            )
         return pd.DataFrame.from_records([result.get_records() for result in results])
 
 
