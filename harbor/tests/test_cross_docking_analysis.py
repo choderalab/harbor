@@ -349,9 +349,8 @@ class TestSplits:
         )
         splits = scaffold_split.run(loaded)
 
-        assert isinstance(splits, DockingDataModel)
-
         split_data = splits[0]
+        assert isinstance(split_data, DockingDataModel)
 
         combined_df = split_data.dataframe
 
@@ -667,7 +666,7 @@ class TestSettings:
         evs = loaded.create_evaluators()
         assert len(evs) == 2
 
-    def test_evaluator_factor_settings(self, docking_data_model, tmpdir):
+    def test_reference_split_with_date_and_random(self, docking_data_model, tmpdir):
         evf = EvaluatorFactory(name="test")
         evf.reference_split_settings.use = True
         evf.reference_split_settings.date_split_settings.use = True
@@ -678,6 +677,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 4
 
+    def test_pairwise_split_with_scaffold_settings(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
@@ -690,6 +690,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
 
+    def test_scaffold_split_x_to_y(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
@@ -705,6 +706,7 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 40
 
+    def test_scaffold_split_x_to_not_x(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
@@ -724,6 +726,27 @@ class TestSettings:
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
 
+    def test_scaffold_split_not_x_to_x(self, docking_data_model):
+        evf = EvaluatorFactory(name="test")
+        evf.pairwise_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.use = True
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
+            "Query_Scaffold"
+        )
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = (
+            "Ref_Scaffold"
+        )
+        evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = (
+            ScaffoldSplitOptions.NOT_X_TO_X
+        )
+        evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_min_count = (
+            1
+        )
+        evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_min_count = 1
+        evs = evf.create_evaluators(docking_data_model)
+        assert len(evs) == 10
+
+    def test_similarity_split_with_logarithmic_scaling(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.similarity_split_settings.use = True
@@ -737,10 +760,10 @@ class TestSettings:
         evf.pairwise_split_settings.similarity_split_settings.update_reference_settings.use_logarithmic_scaling = (
             True
         )
-
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 462
 
+    def test_similarity_split_with_fixed_references(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.similarity_split_settings.use = True
@@ -751,7 +774,6 @@ class TestSettings:
         evf.pairwise_split_settings.similarity_split_settings.n_reference_structures = [
             10
         ]
-
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 42
         results = Results.df_from_results(

@@ -1648,80 +1648,100 @@ class EvaluatorFactory(SettingsBase):
             ):
                 lig_data = data.get_lig_dataframe()
                 ref_data = data.get_ref_dataframe()
-                query_counts = lig_data[
-                    scaffold_settings.query_scaffold_id_column
-                ].value_counts()
-                ref_counts = ref_data[
-                    scaffold_settings.reference_scaffold_id_column
-                ].value_counts()
 
-                if scaffold_settings.query_scaffold_min_count:
-                    valid_query_scaffolds = query_counts[
-                        query_counts >= scaffold_settings.query_scaffold_min_count
-                    ].index.tolist()
-                    scaffold_settings.query_scaffold_id_subset = valid_query_scaffolds
+                # Get valid scaffolds based on minimum count
+                def get_valid_scaffolds(dataframe, column, min_count):
+                    if min_count:
+                        return (
+                            dataframe[column]
+                            .value_counts()[lambda counts: counts >= min_count]
+                            .index.tolist()
+                        )
+                    return []
 
-                if scaffold_settings.reference_scaffold_min_count:
-                    valid_ref_scaffolds = ref_counts[
-                        ref_counts >= scaffold_settings.reference_scaffold_min_count
-                    ].index.tolist()
-                    scaffold_settings.reference_scaffold_id_subset = valid_ref_scaffolds
-
-            # Handle different split options
-            split_option = scaffold_settings.scaffold_split_option
-            flags = split_option.flags
+                scaffold_settings.query_scaffold_id_subset = get_valid_scaffolds(
+                    lig_data,
+                    scaffold_settings.query_scaffold_id_column,
+                    scaffold_settings.query_scaffold_min_count,
+                )
+                scaffold_settings.reference_scaffold_id_subset = get_valid_scaffolds(
+                    ref_data,
+                    scaffold_settings.reference_scaffold_id_column,
+                    scaffold_settings.reference_scaffold_min_count,
+                )
 
             # Initialize lists of query and reference scaffolds
             query_scaffolds = scaffold_settings.query_scaffold_id_subset or []
             ref_scaffolds = scaffold_settings.reference_scaffold_id_subset or []
 
+            # Define split logic for each option
+            split_option = scaffold_settings.scaffold_split_option
+
             if split_option == ScaffoldSplitOptions.X_TO_X:
                 # Use the same scaffolds for both query and reference
-                common_scaffolds = list(
-                    set(query_scaffolds).intersection(ref_scaffolds)
-                )
+                common_scaffolds = set(query_scaffolds).intersection(ref_scaffolds)
                 splits.extend(
-                    [
-                        ScaffoldSplit(
-                            query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
-                            reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
-                            query_scaffold_id_subset=[scaffold],
-                            reference_scaffold_id_subset=[scaffold],
-                            split_option=split_option,
-                        )
-                        for scaffold in common_scaffolds
-                    ]
+                    ScaffoldSplit(
+                        query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
+                        reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
+                        query_scaffold_id_subset=[scaffold],
+                        reference_scaffold_id_subset=[scaffold],
+                        split_option=split_option,
+                    )
+                    for scaffold in common_scaffolds
                 )
 
-            elif split_option == ScaffoldSplitOptions.X_TO_NOT_X:
-                # Each scaffold against all other scaffolds
-                for scaffold in query_scaffolds:
-                    splits.append(
-                        ScaffoldSplit(
-                            query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
-                            reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
-                            query_scaffold_id_subset=[scaffold],
-                            reference_scaffold_id_subset=[
-                                s for s in ref_scaffolds if s != scaffold
-                            ],
-                            split_option=split_option,
-                        )
+            elif split_option in {
+                ScaffoldSplitOptions.X_TO_NOT_X,
+                ScaffoldSplitOptions.NOT_X_TO_X,
+                ScaffoldSplitOptions.X_TO_ALL,
+                ScaffoldSplitOptions.ALL_TO_X,
+            }:
+                # Map split options to query and reference scaffold logic
+                query_scaffold_id_subset = [[q] for q in query_scaffolds]
+                reference_scaffold_id_subset = [[r] for r in ref_scaffolds]
+
+                if split_option == ScaffoldSplitOptions.X_TO_NOT_X:
+                    reference_scaffold_id_subset = [
+                        [r for r in ref_scaffolds if r != q] for q in query_scaffolds
+                    ]
+
+                elif split_option == ScaffoldSplitOptions.NOT_X_TO_X:
+                    query_scaffold_id_subset = [
+                        [q for q in query_scaffolds if q != r] for r in ref_scaffolds
+                    ]
+                elif split_option == ScaffoldSplitOptions.X_TO_ALL:
+                    reference_scaffold_id_subset = [
+                        ref_scaffolds for _ in query_scaffolds
+                    ]
+                elif split_option == ScaffoldSplitOptions.X_TO_ALL:
+                    query_scaffold_id_subset = [query_scaffolds for _ in ref_scaffolds]
+
+                splits.extend(
+                    ScaffoldSplit(
+                        query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
+                        reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
+                        query_scaffold_id_subset=query,
+                        reference_scaffold_id_subset=ref,
+                        split_option=split_option,
                     )
+                    for query, ref in zip(
+                        query_scaffold_id_subset, reference_scaffold_id_subset
+                    )
+                )
 
             elif split_option == ScaffoldSplitOptions.X_TO_Y:
                 # All possible pairs of different scaffolds
                 splits.extend(
-                    [
-                        ScaffoldSplit(
-                            query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
-                            reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
-                            query_scaffold_id_subset=[q],
-                            reference_scaffold_id_subset=[r],
-                            split_option=split_option,
-                        )
-                        for q, r in itertools.product(query_scaffolds, ref_scaffolds)
-                        if q != r
-                    ]
+                    ScaffoldSplit(
+                        query_scaffold_id_column=scaffold_settings.query_scaffold_id_column,
+                        reference_scaffold_id_column=scaffold_settings.reference_scaffold_id_column,
+                        query_scaffold_id_subset=[q],
+                        reference_scaffold_id_subset=[r],
+                        split_option=split_option,
+                    )
+                    for q, r in itertools.product(query_scaffolds, ref_scaffolds)
+                    if q != r
                 )
 
         # Handle similarity splits (if implemented)
