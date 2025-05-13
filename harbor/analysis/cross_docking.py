@@ -1239,9 +1239,11 @@ class Results(BaseModel):
     def calculate_results(
         cls, data: DockingDataModel, evaluators: list[Evaluator]
     ) -> list["Results"]:
-        for ev in tqdm(evaluators):
+        data_copies = [data.__deepcopy__() for ev in evaluators]
+        results = []
+        for data, ev in tqdm(zip(data_copies, evaluators)):
             result = ev.run(data)
-            yield cls(evaluator=ev, success_rate=result)
+            results.append(cls(evaluator=ev, success_rate=result))
 
     @classmethod
     def df_from_results(cls, results: list["Results"]) -> pd.DataFrame:
