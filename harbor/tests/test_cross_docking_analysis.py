@@ -868,7 +868,10 @@ class TestResults:
             results
             for results in Results.calculate_results(docking_data_model, evaluators)
         ]
+        df = Results.df_from_results(results)
 
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == len(evaluators)
         assert isinstance(results, list)
         assert len(results) == 1
         assert isinstance(results[0], Results)

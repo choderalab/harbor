@@ -1249,7 +1249,7 @@ class Results(BaseModel):
     ) -> list["Results"]:
         data_copies = [data.__deepcopy__() for ev in evaluators]
         results = []
-        for data, ev in tqdm(zip(data_copies, evaluators)):
+        for data, ev in tqdm(zip(data_copies, evaluators), total=len(evaluators)):
             result = ev.run(data)
             results.append(cls(evaluator=ev, success_rate=result))
         return results
