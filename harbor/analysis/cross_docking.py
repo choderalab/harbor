@@ -615,24 +615,26 @@ class SimilaritySplit(PairwiseSplitBase):
         elif self.include_similar != self.higher_is_more_similar:
             df = df[df[self.similarity_column] <= self.threshold]
 
-        # finally, group by the query ligand column and randomly sample from the top N structures
-        return [
-            DockingDataModel(
-                dataframe=(
-                    df.groupby(self.query_ligand_column)
-                    .apply(
-                        lambda x: (
-                            x
-                            if len(x) <= self.n_reference_structures
-                            else x.sample(n=self.n_reference_structures)
+        if self.n_reference_structures is None:
+            return [DockingDataModel(dataframe=df, **data.model_dump())]
+        else:
+            return [
+                DockingDataModel(
+                    dataframe=(
+                        df.groupby(self.query_ligand_column)
+                        .apply(
+                            lambda x: (
+                                x
+                                if len(x) <= self.n_reference_structures
+                                else x.sample(n=self.n_reference_structures)
+                            )
                         )
-                    )
-                    .reset_index(drop=True)
-                ),
-                **data.model_dump(),
-            )
-            for _ in range(bootstraps)
-        ]
+                        .reset_index(drop=True)
+                    ),
+                    **data.model_dump(),
+                )
+                for _ in range(bootstraps)
+            ]
 
     def get_records(self) -> dict:
         records = super().get_records()

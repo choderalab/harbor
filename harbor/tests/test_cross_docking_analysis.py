@@ -447,6 +447,7 @@ class TestSplits:
         assert len(result_high) == 1  # Should return single split
         df_high = result_high[0].dataframe
         assert all(df_high["Tanimoto"] >= 0.7)
+        print(ss_high.get_records())
 
         # Test with threshold below which to include pairs
         ss_low = SimilaritySplit(
@@ -461,7 +462,7 @@ class TestSplits:
         result_low = ss_low.run(docking_data_model)
         assert len(result_low) == 1
         df_low = result_low[0].dataframe
-        assert all(df_low["Aligned"] is True)
+        assert all(df_low["Aligned"] == True)
         assert all(df_low["Tanimoto"] < 0.3)
 
         # Test with bootstrapping
