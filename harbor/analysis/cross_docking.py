@@ -1256,22 +1256,26 @@ class Results(BaseModel):
 
     @classmethod
     def df_from_results(
-        cls, results: list["Results"], include_model=True
+        cls, results: list["Results"], include_model: bool = True
     ) -> pd.DataFrame:
-        if include_model:
-            return pd.DataFrame.from_records(
-                [
-                    dict(
-                        Evaluator_Model=result.evaluator.to_json_str(),
-                        **result.get_records(),
-                    )
-                    for result in results
-                ]
-            )
-        else:
-            return pd.DataFrame.from_records(
-                [result.get_records() for result in results]
-            )
+        if not results:
+            # Handle empty results explicitly
+            return pd.DataFrame()
+
+        # Build records based on include_model
+        records = (
+            [
+                {
+                    **result.get_records(),
+                    "Evaluator_Model": result.evaluator.to_json_str(),
+                }
+                for result in results
+            ]
+            if include_model
+            else [result.get_records() for result in results]
+        )
+
+        return pd.DataFrame.from_records(records)
 
 
 class SettingsBase(BaseModel):
