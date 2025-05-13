@@ -816,7 +816,7 @@ class TestResults:
     def test_df_from_results(self, sample_results):
         """Test converting results to DataFrame."""
         df = Results.df_from_results(sample_results)
-
+        print(df.Evaluator_Model.unique()[0])
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 3
         assert all(
@@ -845,6 +845,7 @@ class TestResults:
                     "Scaffold_Split_Option",
                     "Query_Scaffold_ID_Subset",
                     "Reference_Scaffold_ID_Subset",
+                    "Evaluator_Model",
                 ]
             ]
         )

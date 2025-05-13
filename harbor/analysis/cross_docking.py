@@ -1261,13 +1261,17 @@ class Results(BaseModel):
         if include_model:
             return pd.DataFrame.from_records(
                 [
-                    result.get_records().update(
-                        {"Evaluator_Model": result.evaluator.to_json_str()}
+                    dict(
+                        Evaluator_Model=result.evaluator.to_json_str(),
+                        **result.get_records(),
                     )
                     for result in results
                 ]
             )
-        return pd.DataFrame.from_records([result.get_records() for result in results])
+        else:
+            return pd.DataFrame.from_records(
+                [result.get_records() for result in results]
+            )
 
 
 class SettingsBase(BaseModel):
