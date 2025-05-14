@@ -539,7 +539,7 @@ class TestEvaluator:
             evaluator=binary_evaluator,
             n_bootstraps=1000,
         )
-        data_list = ev.run_dataset_split(docking_data_model)
+        data_list = ev.run_dataset_split([docking_data_model])
         dfs = [data.dataframe[data.dataframe["Pose_ID"] == 0] for data in data_list]
         lig_total = len(ligs)
         fractions = []

@@ -1,5 +1,4 @@
 import itertools
-import logging
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from typing_extensions import Self
 import abc
@@ -1849,6 +1848,7 @@ class EvaluatorFactory(SettingsBase):
                     )
                     if reference_splits is not None or similarity_splits is not None:
 
+                        # if we have them, and we want to combine them, then we combine all combinations of hem
                         if (
                             reference_splits is not None
                             and similarity_splits is not None
@@ -1860,12 +1860,20 @@ class EvaluatorFactory(SettingsBase):
                                 ev.dataset_split = ref_split
                                 ev.similarity_split = sim_split
                                 evaluators.append(ev)
-                        if reference_splits is not None:
+
+                        # otherwise just make whichever one we have
+                        if (
+                            reference_splits is not None
+                            and not self.combine_reference_and_similarity_splits
+                        ):
                             for ref_split in reference_splits:
                                 ev = evaluator.copy()
                                 ev.dataset_split = ref_split
                                 evaluators.append(ev)
-                        if similarity_splits is not None:
+                        if (
+                            similarity_splits is not None
+                            and not self.combine_reference_and_similarity_splits
+                        ):
                             for sim_split in similarity_splits:
                                 ev = evaluator.copy()
                                 ev.similarity_split = sim_split
