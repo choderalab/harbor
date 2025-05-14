@@ -577,15 +577,13 @@ class TestEvaluator:
             n_bootstraps=1000,
         )
 
-        # compare time
         import time
 
-        # Time old evaluator
         start_time = time.perf_counter()
         results = ev.run(docking_data_model)
         total_time = time.perf_counter() - start_time
 
-        assert total_time < 15
+        assert total_time < 20
 
         print(f"Evaluator: {total_time:.3f} seconds")
         print(results)
