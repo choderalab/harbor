@@ -1847,33 +1847,37 @@ class EvaluatorFactory(SettingsBase):
                         dataset_before_similarity=self.dataset_before_similarity,
                     )
                     if reference_splits is not None or similarity_splits is not None:
-
-                        # if we have them, and we want to combine them, then we combine all combinations of hem
                         if (
                             reference_splits is not None
                             and similarity_splits is not None
-                        ) and self.combine_reference_and_similarity_splits:
-                            for sim_split, ref_split in itertools.product(
-                                similarity_splits, reference_splits
-                            ):
-                                ev = evaluator.copy()
-                                ev.dataset_split = ref_split
-                                ev.similarity_split = sim_split
-                                evaluators.append(ev)
-
-                        # otherwise just make whichever one we have
-                        if (
-                            reference_splits is not None
-                            and not self.combine_reference_and_similarity_splits
                         ):
+                            if self.combine_reference_and_similarity_splits:
+                                # Combine all combinations
+                                for sim_split, ref_split in itertools.product(
+                                    similarity_splits, reference_splits
+                                ):
+                                    ev = evaluator.copy()
+                                    ev.dataset_split = ref_split
+                                    ev.similarity_split = sim_split
+                                    evaluators.append(ev)
+                            else:
+                                # Handle splits separately
+                                for ref_split in reference_splits:
+                                    ev = evaluator.copy()
+                                    ev.dataset_split = ref_split
+                                    evaluators.append(ev)
+                                for sim_split in similarity_splits:
+                                    ev = evaluator.copy()
+                                    ev.similarity_split = sim_split
+                                    evaluators.append(ev)
+                        elif reference_splits is not None:
+                            # Only reference splits
                             for ref_split in reference_splits:
                                 ev = evaluator.copy()
                                 ev.dataset_split = ref_split
                                 evaluators.append(ev)
-                        if (
-                            similarity_splits is not None
-                            and not self.combine_reference_and_similarity_splits
-                        ):
+                        else:
+                            # Only similarity splits
                             for sim_split in similarity_splits:
                                 ev = evaluator.copy()
                                 ev.similarity_split = sim_split
