@@ -1132,26 +1132,35 @@ class Evaluator(ModelBase):
         ..., description="How to determine how good the results are"
     )
     n_bootstraps: int = Field(1, description="Number of bootstrap replicates to run")
+    dataset_before_similarity: bool = Field(
+        True,
+        description="Whether to run the dataset split before the similarity split, or vice versa. Defaults True.",
+    )
 
-    def run_pose_selector(self, data: DockingDataModel) -> DockingDataModel:
-        return self.pose_selector.run(data)
+    def run_pose_selector(self, data: [DockingDataModel]) -> [DockingDataModel]:
+        return [self.pose_selector.run(data_) for data_ in data]
 
-    def run_dataset_split(self, data: DockingDataModel) -> [DockingDataModel]:
+    def run_dataset_split(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
         if self.dataset_split is not None:
-            return self.dataset_split.run(data, bootstraps=self.n_bootstraps)
+            return [
+                split
+                for data_ in data_splits
+                for split in self.dataset_split.run(data_, bootstraps=self.n_bootstraps)
+            ]
         else:
-            return [data]
+            return data_splits
 
     def run_similarity_split(
         self, data_splits: [DockingDataModel]
     ) -> [DockingDataModel]:
         if self.similarity_split is not None:
-            data_splits: list[DockingDataModel] = [
+            return [
                 split
                 for data_ in data_splits
                 for split in self.similarity_split.run(data_)
             ]
-        return data_splits
+        else:
+            return data_splits
 
     def run_scorer(self, data_splits: [DockingDataModel]) -> [DockingDataModel]:
         return [self.scorer.run(data_) for data_ in data_splits]
@@ -1161,10 +1170,15 @@ class Evaluator(ModelBase):
         return SuccessRate.from_replicates(results)
 
     def run(self, data: DockingDataModel) -> SuccessRate:
-        pose_selected = self.run_pose_selector(data)
-        dataset_split_data = self.run_dataset_split(pose_selected)
-        similarity_split_data = self.run_similarity_split(dataset_split_data)
-        scored_data = self.run_scorer(similarity_split_data)
+        pose_selected = self.run_pose_selector([data])
+        if self.dataset_before_similarity:
+            split_data = self.run_dataset_split(pose_selected)
+            split_data = self.run_similarity_split(split_data)
+        else:
+            split_data = self.run_similarity_split(pose_selected)
+            split_data = self.run_dataset_split(split_data)
+
+        scored_data = self.run_scorer(split_data)
         return self.calculate_results(scored_data)
 
     @field_validator(
@@ -1547,6 +1561,10 @@ class EvaluatorFactory(SettingsBase):
         True,
         description="If both reference  and pairwise splits are set to use=True, evaluate them at the same time. ",
     )
+    dataset_before_similarity: bool = Field(
+        True,
+        description="Whether to run the dataset split before the similarity split, or vice versa. Defaults True.",
+    )
     n_bootstraps: int = Field(1000, description="Number of bootstrapped samples to run")
     query_ligand_column: str = Field(
         "Query_Ligand", description="Name of the column containing the query ligand id"
@@ -1827,6 +1845,7 @@ class EvaluatorFactory(SettingsBase):
                         scorer=scorer,
                         evaluator=success_rate_evaluator,
                         n_bootstraps=self.n_bootstraps,
+                        dataset_before_similarity=self.dataset_before_similarity,
                     )
                     if reference_splits is not None or similarity_splits is not None:
 
