@@ -41,13 +41,13 @@ def setup_random_state():
 @pytest.fixture()
 def refs():
     """Sample reference structures fixture."""
-    return [f"PDB{i}" for i in range(1, 500)]
+    return [f"PDB{i}" for i in range(1, 50)]
 
 
 @pytest.fixture()
 def ligs():
     """Sample ligands fixture."""
-    return [f"LIG_{i}" for i in range(1, 500)]
+    return [f"LIG_{i}" for i in range(1, 50)]
 
 
 @pytest.fixture()
@@ -157,7 +157,11 @@ def scaffold_dataframe(refs, ligs, ref_dataframe, lig_dataframe):
 
 @pytest.fixture()
 def docking_data_model(
-    pose_dataframe, ref_dataframe, lig_dataframe, tanimotocombo_data
+    pose_dataframe,
+    ref_dataframe,
+    lig_dataframe,
+    tanimotocombo_data,
+    ecfp_dataframe,
 ):
     pose_df = DataFrameModel(
         name="PoseData",
@@ -250,7 +254,7 @@ class TestDataFrameModel:
             key_columns=["Query_Ligand"],
         )
         merged = DockingDataModel.from_models([pose_df, ref_df, lig_df])
-        assert merged.dataframe.size == 4980020
+        assert len(merged.dataframe) == len(pose_df.dataframe)
 
         assert set(merged.get_key_columns()) == {
             "Query_Ligand",
@@ -258,10 +262,79 @@ class TestDataFrameModel:
             "Pose_ID",
         }
 
+    def test_duplicate_key_columns(self, pose_dataframe):
+        """Test that duplicate key columns raise a ValueError."""
+        with pytest.raises(ValueError):
+            DataFrameModel(
+                name="PoseData",
+                type=DataFrameType.POSE,
+                dataframe=pose_dataframe,
+                key_columns=["Query_Ligand", "Query_Ligand"],  # Duplicate column
+            )
+
+    def test_empty_grouping_result(self):
+        """Test that grouping by key_columns and param_columns resulting in an empty DataFrame raises a KeyError."""
+        empty_df = pd.DataFrame({"A": [], "B": []})
+        with pytest.raises(KeyError):
+            DataFrameModel(
+                name="EmptyData",
+                type=DataFrameType.POSE,
+                dataframe=empty_df,
+                key_columns=["A"],
+                param_columns=["B"],
+            )
+
+    def test_duplicate_rows_in_grouping(self):
+        """Test that duplicate rows after grouping raise a KeyError."""
+        duplicate_df = pd.DataFrame({"A": [1, 1], "B": [2, 2], "C": [1, 2]})
+        with pytest.raises(KeyError):
+            DataFrameModel(
+                name="DuplicateData",
+                type=DataFrameType.POSE,
+                dataframe=duplicate_df,
+                key_columns=["A"],
+                param_columns=["B"],
+            )
+
+    def test_missing_columns_in_dataframe(self, pose_dataframe):
+        """Test that missing columns in the DataFrame raise a ValueError."""
+        with pytest.raises(KeyError):
+            DataFrameModel(
+                name="PoseData",
+                type=DataFrameType.POSE,
+                dataframe=pose_dataframe,
+                key_columns=["Nonexistent_Column"],  # Column does not exist
+            )
+
+    def test_value_columns_are_set_correctly(self, pose_dataframe):
+        """Test that value_columns are set correctly when additional columns are present."""
+        model = DataFrameModel(
+            name="PoseData",
+            type=DataFrameType.POSE,
+            dataframe=pose_dataframe,
+            key_columns=["Query_Ligand", "Reference_Structure", "Pose_ID"],
+        )
+        additional_columns = set(pose_dataframe.columns) - set(
+            model.key_columns + model.param_columns
+        )
+        print(additional_columns)
+        assert set(model.value_columns) == additional_columns
+
 
 class TestDockingDataModel:
+
     @pytest.fixture()
-    def docking_data_model(self, pose_dataframe, ref_dataframe, lig_dataframe):
+    def docking_data_model(
+        self,
+        request,
+        pose_dataframe,
+        ref_dataframe,
+        lig_dataframe,
+        tanimotocombo_data,
+        ecfp_dataframe,
+        scaffold_dataframe,
+    ):
+
         pose_df = DataFrameModel(
             name="PoseData",
             type=DataFrameType.POSE,
@@ -280,8 +353,66 @@ class TestDockingDataModel:
             dataframe=lig_dataframe,
             key_columns=["Query_Ligand"],
         )
-        return DockingDataModel.from_models([pose_df, ref_df, lig_df])
+        tcdf = DataFrameModel(
+            name="TanimotoComboData",
+            type=DataFrameType.CHEMICAL_SIMILARITY,
+            dataframe=tanimotocombo_data,
+            key_columns=["Query_Ligand", "Reference_Structure"],
+            param_columns=["Aligned"],
+        )
+        ecfpdf = DataFrameModel(
+            name="ECFPData",
+            type=DataFrameType.CHEMICAL_SIMILARITY,
+            dataframe=ecfp_dataframe,
+            key_columns=[
+                "Query_Ligand",
+                "Reference_Structure",
+            ],
+            param_columns=["radius", "bitsize"],
+        )
+        scaffdf = DataFrameModel(
+            name="ScaffoldData",
+            type=DataFrameType.CHEMICAL_SIMILARITY,
+            dataframe=scaffold_dataframe,
+            key_columns=["Query_Ligand", "Reference_Structure"],
+        )
 
+        if request.param == "simple":
+            return DockingDataModel.from_models([pose_df, ref_df, lig_df])
+
+        if request.param == "tc":
+            return DockingDataModel.from_models([pose_df, ref_df, lig_df, tcdf])
+
+        if request.param == "complete":
+            return DockingDataModel.from_models(
+                [pose_df, ref_df, lig_df, tcdf, ecfpdf, scaffdf]
+            )
+
+    @pytest.mark.parametrize(
+        "docking_data_model", ["simple", "tc", "complete"], indirect=True
+    )
+    def test_to_and_from_dataframe_round_trip(self, docking_data_model):
+        # Convert the DockingDataModel to individual DataFrameModels
+        models = docking_data_model.to_models()
+
+        # Recreate the DockingDataModel from the individual models
+        recreated_docking_data_model = DockingDataModel.from_models(models)
+
+        # Assert that the original and recreated DockingDataModels are equal
+        assert docking_data_model == recreated_docking_data_model
+
+    @pytest.mark.parametrize(
+        "docking_data_model", ["simple", "tc", "complete"], indirect=True
+    )
+    def test_docking_data_model_creation(self, docking_data_model):
+        assert isinstance(docking_data_model, DockingDataModel)
+        assert len(docking_data_model.dataframe) > 0
+        print(docking_data_model.dataframe.columns)
+        print(len(docking_data_model.dataframe))
+
+    @pytest.mark.parametrize(
+        "docking_data_model", ["simple", "tc", "complete"], indirect=True
+    )
     def test_docking_data_model_serialization(self, docking_data_model, tmpdir):
         fp = docking_data_model.serialize(Path(tmpdir) / "test_pose_data")
         assert fp.with_suffix(".parquet").exists()
@@ -291,9 +422,12 @@ class TestDockingDataModel:
 
         assert loaded == docking_data_model
 
+    @pytest.mark.parametrize(
+        "docking_data_model", ["simple", "tc", "complete"], indirect=True
+    )
     def test_docking_data_model_methods(self, refs, docking_data_model):
         assert set(docking_data_model.get_unique_refs()) == set(refs)
-        assert len(docking_data_model.get_unique_refs()) == 499
+        assert len(docking_data_model.get_unique_refs()) == 49
 
 
 class TestSplits:

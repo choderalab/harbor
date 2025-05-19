@@ -96,7 +96,7 @@ def merge_on_common_columns(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFram
     common_cols = list(set(df1.columns) & set(df2.columns))
     if not common_cols:
         raise ValueError("No common columns found between DataFrames")
-    return pd.merge(df1, df2, on=common_cols, how="inner")
+    return pd.merge(df1, df2, on=common_cols, how="outer")
 
 
 class DataFrameType(StrEnum):
@@ -159,9 +159,13 @@ class DataFrameModelBase(BaseModel):
 
 class DataFrameModel(DataFrameModelBase):
     key_columns: list[str] = Field(
-        ..., description="Columns that specify the unique keys"
+        ..., description="Columns that connect this data with other data"
     )
-    other_columns: list[str] = Field(
+    param_columns: list[str] = Field(
+        [],
+        description="Columns that, combined with the key_columns, specify all the columns necessary to select unique rows",
+    )
+    value_columns: list[str] = Field(
         [], description="The other columns expected in the data"
     )
 
@@ -173,26 +177,43 @@ class DataFrameModel(DataFrameModelBase):
             and self.key_columns == other.key_columns
         )
 
-    @field_validator("key_columns", "other_columns")
+    @field_validator("key_columns", "value_columns")
     def check_columns_are_unique(cls, v):
         if len(set(v)) < len(v):
             raise ValueError
         return v
 
     @model_validator(mode="after")
-    def check_columns_in_dataframe(self):
-        """Check if all expected columns are in DataFrame and ensure key_columns uniqueness."""
-        expected_cols = self.key_columns + self.other_columns
+    def check_key_and_params_specify_unique_rows(self):
+        """Make sure that if you sort by the combined key and params columns you get a unique row for each combination of key and params"""
+
+        expected_cols = self.key_columns + self.param_columns
         for col in expected_cols:
             if col not in self.dataframe.columns:
-                raise ValueError(
+                raise KeyError(
                     f"Expected Column '{col}' specified is not present in the DataFrame columns {self.dataframe.columns}."
                 )
+
+        grouped_by_key_and_param = self.dataframe.groupby(expected_cols).count()
+        if len(grouped_by_key_and_param) == 0:
+            raise KeyError(
+                f"Grouping the dataframe by key_columns: '{self.key_columns}'"
+                f"and param_columns: '{self.param_columns}"
+                f"resulted in an empty dataframe"
+            )
+        n_problem_rows = (grouped_by_key_and_param > 1).any(axis=1).sum()
+        if n_problem_rows > 0:
+            raise KeyError(
+                f"Grouping the dataframe by key_columns: '{self.key_columns}'"
+                f"and param_columns: '{self.param_columns}"
+                f"resulted in {n_problem_rows} rows with duplicate values."
+                f"Perhaps another column is needed!"
+            )
 
         additional_cols = [
             col for col in self.dataframe.columns if col not in expected_cols
         ]
-        self.other_columns.extend(additional_cols)
+        self.value_columns.extend(additional_cols)
         return self
 
 
@@ -205,20 +226,29 @@ class DockingDataModel(DataFrameModelBase):
     )
     key_columns_dict: dict[str, list[str]] = Field(
         ...,
-        description="Dictionary mapping a unique name to a list of keys needed to query the dataset",
+        description="Dictionary mapping a unique name to a list of keys that link all the data",
     )
-    other_columns_dict: dict[str, list[str]] = Field(
+    param_columns_dict: dict[str, list[str]] = Field(
         ...,
-        description="Dictionary mapping a unique name to a list of columns corresponding to each internal dataframe",
+        description="Dictionary mapping a unique name to a list of columns, that when combined with the key_columns, result in a unique rows",
+    )
+    value_columns_dict: dict[str, list[str]] = Field(
+        ...,
+        description="Dictionary mapping a unique name to a list of columns with the values we want to query from each dataframe",
     )
 
     def __eq__(self, other):
         if not isinstance(other, DockingDataModel):
             return False
+
+        # make sure dataframes are equal even if not in the same order
+        df1_sorted = self.dataframe.reset_index(drop=True).sort_index(axis=1)
+        df2_sorted = other.dataframe.reset_index(drop=True).sort_index(axis=1)
         return (
-            self.dataframe.equals(other.dataframe)
+            df1_sorted.equals(df2_sorted)
             and set(self.get_key_columns()) == set(other.get_key_columns())
-            and set(self.get_other_columns()) == set(other.get_other_columns())
+            and set(self.get_param_columns()) == set(other.get_param_columns())
+            and set(self.get_value_columns()) == set(other.get_value_columns())
             and set(self.get_dataframe_names()) == set(other.get_dataframe_names())
         )
 
@@ -252,9 +282,14 @@ class DockingDataModel(DataFrameModelBase):
             set([col for cols in self.key_columns_dict.values() for col in cols])
         )
 
-    def get_other_columns(self) -> list:
+    def get_param_columns(self) -> list:
         return list(
-            set([col for cols in self.other_columns_dict.values() for col in cols])
+            set([col for cols in self.param_columns_dict.values() for col in cols])
+        )
+
+    def get_value_columns(self) -> list:
+        return list(
+            set([col for cols in self.value_columns_dict.values() for col in cols])
         )
 
     def get_pose_data_columns(self) -> list:
@@ -280,23 +315,95 @@ class DockingDataModel(DataFrameModelBase):
         if len(set(names)) < len(names):
             raise ValueError(f"DataFrameModels should have unique names: {names}")
 
-        df = reduce(merge_on_common_columns, [model.dataframe for model in data_models])
+        # Rename columns in each DataFrame to include the dataset name as a prefix
+        renamed_dataframes = []
+        for model in data_models:
+            renamed_df = model.dataframe.rename(
+                columns={
+                    col: f"{model.name}_{col}"
+                    for col in model.dataframe.columns
+                    if col not in model.key_columns
+                }
+            )
+            renamed_dataframes.append(renamed_df)
+
+        # Merge the renamed DataFrames on common columns
+        df = reduce(merge_on_common_columns, renamed_dataframes)
+
+        # Update key_columns_dict and other_columns_dict with renamed columns
+        key_columns_dict = {
+            model.name: [col for col in model.key_columns] for model in data_models
+        }
+        param_columns_dict = {
+            model.name: [f"{model.name}_{col}" for col in model.param_columns]
+            for model in data_models
+        }
+        value_columns_dict = {
+            model.name: [f"{model.name}_{col}" for col in model.value_columns]
+            for model in data_models
+        }
 
         return DockingDataModel(
             name="DockingDataModel",
             type=DataFrameType.COMBINED,
             dataframe=df,
             data_types_dict={model.name: model.type for model in data_models},
-            key_columns_dict={model.name: model.key_columns for model in data_models},
-            other_columns_dict={
-                model.name: model.other_columns for model in data_models
-            },
+            key_columns_dict=key_columns_dict,
+            param_columns_dict=param_columns_dict,
+            value_columns_dict=value_columns_dict,
         )
+
+    def to_models(self) -> list["DataFrameModel"]:
+        models = []
+        for model_name, model_type in self.data_types_dict.items():
+            # Extract relevant columns from the combined DataFrame
+            relevant_columns = (
+                self.key_columns_dict[model_name]
+                + self.param_columns_dict[model_name]
+                + self.value_columns_dict[model_name]
+            )
+            model_dataframe = self.dataframe.groupby(relevant_columns)[
+                relevant_columns
+            ].head(1)
+            print(model_name, model_type, relevant_columns)
+
+            # rename columns
+            param_columns = [
+                col.replace(f"{model_name}_", "")
+                for col in self.param_columns_dict[model_name]
+            ]
+            value_columns = [
+                col.replace(f"{model_name}_", "")
+                for col in self.value_columns_dict[model_name]
+            ]
+
+            # Rename columns to remove the dataset name prefix
+            model_dataframe.rename(
+                columns={
+                    f"{model_name}_{col}": col for col in param_columns + value_columns
+                },
+                inplace=True,
+            )
+
+            # Create a DataFrameModel instance
+            model = DataFrameModel(
+                name=model_name,
+                type=model_type,
+                dataframe=model_dataframe,
+                key_columns=self.key_columns_dict[model_name],
+                param_columns=param_columns,
+                value_columns=value_columns,
+            )
+            models.append(model)
+
+        return models
 
     @model_validator(mode="after")
     def check_columns_in_dataframe(self):
         """Check if all expected columns are in DataFrame and ensure key_columns uniqueness."""
-        expected_cols = self.get_key_columns() + self.get_other_columns()
+        expected_cols = (
+            self.get_key_columns() + self.get_param_columns() + self.get_value_columns()
+        )
         for col in expected_cols:
             if col not in self.dataframe.columns:
                 raise ValueError(
