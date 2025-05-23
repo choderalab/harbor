@@ -96,7 +96,7 @@ def merge_on_common_columns(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFram
     common_cols = list(set(df1.columns) & set(df2.columns))
     if not common_cols:
         raise ValueError("No common columns found between DataFrames")
-    return pd.merge(df1, df2, on=common_cols, how="outer")
+    return pd.merge(df1, df2, on=common_cols, how="left")
 
 
 class DataFrameType(StrEnum):
@@ -291,6 +291,21 @@ class DockingDataModel(DataFrameModelBase):
         return list(
             set([col for cols in self.value_columns_dict.values() for col in cols])
         )
+
+    def get_groupby_columns(self, except_cols: set = {}) -> list:
+        """
+        If provided without any `except_cols`, this should return the original dataframe.
+        :param except_cols:
+        :return:
+        """
+        if not isinstance(except_cols, list | set):
+            raise ValueError(
+                f"except_cols must be a list or set, not {type(except_cols)}"
+            )
+        kc = set(self.get_key_columns())
+        pc = set(self.get_param_columns())
+        cc = kc.union(pc) - set(except_cols)
+        return list(cc)
 
     def get_pose_data_columns(self) -> list:
         pose_data_key = [
@@ -1025,7 +1040,7 @@ class PoseSelector(SorterBase):
     category: str = "PoseSelection"
 
     def run(self, data: DockingDataModel) -> DockingDataModel:
-        key_columns = data.get_pose_data_columns()
+        key_columns = data.get_groupby_columns(except_cols=["Pose_ID"])
         sf = ColumnSortFilter(
             sort_column=self.variable,
             key_columns=key_columns,
