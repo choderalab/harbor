@@ -1,7 +1,5 @@
 import pytest
 from datetime import datetime, timedelta
-import numpy as np
-from unittest.mock import patch
 from pathlib import Path
 
 from harbor.analysis.cross_docking import (
@@ -12,7 +10,6 @@ from harbor.analysis.cross_docking import (
     SimilaritySplit,
     ScaffoldSplit,
     RandomSplit,
-    Scorer,
     RMSDScorer,
     POSITScorer,
     ScaffoldSplitOptions,
@@ -39,19 +36,34 @@ def setup_random_state():
 
 
 @pytest.fixture()
-def refs():
+def n_refs():
+    return 50
+
+
+@pytest.fixture()
+def refs(n_refs):
     """Sample reference structures fixture."""
-    return [f"PDB{i}" for i in range(1, 50)]
+    return [f"PDB{i}" for i in range(n_refs)]
 
 
 @pytest.fixture()
-def ligs():
+def n_ligs():
+    return 50
+
+
+@pytest.fixture()
+def ligs(n_ligs):
     """Sample ligands fixture."""
-    return [f"LIG_{i}" for i in range(1, 50)]
+    return [f"LIG_{i}" for i in range(n_ligs)]
 
 
 @pytest.fixture()
-def ref_dataframe(refs):
+def n_scaffolds():
+    return 5
+
+
+@pytest.fixture()
+def ref_dataframe(refs, n_scaffolds):
     """Sample reference data fixture."""
     return pd.DataFrame(
         {
@@ -59,28 +71,35 @@ def ref_dataframe(refs):
             "Ref_Data_1": [np.random.random() for ref in refs],
             "Date": [datetime.now() - timedelta(days=i) for i in range(len(refs))],
             "Ref_Scaffold": [
-                np.random.choice([f"Scaffold_{i}" for i in range(5)]) for _ in refs
+                np.random.choice([f"Scaffold_{i}" for i in range(n_scaffolds)])
+                for _ in refs
             ],
         }
     )
 
 
 @pytest.fixture()
-def lig_dataframe(ligs):
+def lig_dataframe(ligs, n_scaffolds):
     """Sample ligand data fixture."""
     return pd.DataFrame(
         {
             "Query_Ligand": ligs,
             "Lig_Data_1": [np.random.random() for lig in ligs],
             "Query_Scaffold": [
-                np.random.choice([f"Scaffold_{i}" for i in range(5)]) for _ in ligs
+                np.random.choice([f"Scaffold_{i}" for i in range(n_scaffolds)])
+                for _ in ligs
             ],
         }
     )
 
 
 @pytest.fixture()
-def pose_dataframe(refs, ligs):
+def n_poses():
+    return 2
+
+
+@pytest.fixture()
+def pose_dataframe(refs, ligs, n_poses):
     """Sample pose results fixture."""
     return pd.DataFrame.from_records(
         [
@@ -89,9 +108,9 @@ def pose_dataframe(refs, ligs):
                 "Query_Ligand": lig,
                 "RMSD": np.random.random() * 8,
                 "Pose_ID": pose,
-                "docking-confidence-POSIT": np.random.random(),
+                "POSIT_Probability": np.random.random(),
             }
-            for ref, lig, pose in itertools.product(refs, ligs, range(0, 2))
+            for ref, lig, pose in itertools.product(refs, ligs, range(n_poses))
         ]
     )
 
@@ -185,21 +204,21 @@ def docking_data_model(
         name="TanimotoComboData",
         type=DataFrameType.CHEMICAL_SIMILARITY,
         dataframe=tanimotocombo_data,
-        key_columns=["Query_Ligand", "Reference_Structure", "Aligned"],
+        key_columns=["Query_Ligand", "Reference_Structure"],
+        param_columns=["Aligned"],
     )
     return DockingDataModel.from_models([pose_df, ref_df, lig_df, tcdf])
 
 
 def test_column_filter(pose_dataframe):
     """Test the ColumnFilter class."""
-
     cf = ColumnFilter(
         column="RMSD",
         value=4.0,
         operator="le",
     )
     filtered_df = cf.filter(pose_dataframe)
-    assert len(filtered_df) == 248850  # 2 poses per reference-ligand pair
+    assert len(filtered_df) == 2549  # 2 poses per reference-ligand pair
     assert all(filtered_df["RMSD"] <= 4.0)
 
     # Test with a different operator
@@ -209,7 +228,7 @@ def test_column_filter(pose_dataframe):
         operator="ge",
     )
     filtered_df = cf.filter(pose_dataframe)
-    assert len(filtered_df) == 249152
+    assert len(filtered_df) == 2451
     assert all(filtered_df["RMSD"] >= 4.0)
 
 
@@ -425,9 +444,9 @@ class TestDockingDataModel:
     @pytest.mark.parametrize(
         "docking_data_model", ["simple", "tc", "complete"], indirect=True
     )
-    def test_docking_data_model_methods(self, refs, docking_data_model):
+    def test_docking_data_model_methods(self, refs, docking_data_model, n_refs):
         assert set(docking_data_model.get_unique_refs()) == set(refs)
-        assert len(docking_data_model.get_unique_refs()) == 49
+        assert len(docking_data_model.get_unique_refs()) == n_refs
 
 
 class TestSplits:
@@ -445,7 +464,7 @@ class TestSplits:
         date_split = DateSplit(
             n_reference_structures=3,
             reference_structure_column="Reference_Structure",
-            date_column="Date",
+            date_column="RefData_Date",
             randomize_by_n_days=3,
         )
         splits = date_split.run(docking_data_model, bootstraps=10)
@@ -475,8 +494,8 @@ class TestSplits:
         loaded = DockingDataModel.deserialize(fp)
         """Test the ScaffoldSplit class."""
         scaffold_split = ScaffoldSplit(
-            query_scaffold_id_column="Query_Scaffold",
-            reference_scaffold_id_column="Ref_Scaffold",
+            query_scaffold_id_column="QueryData_Query_Scaffold",
+            reference_scaffold_id_column="RefData_Ref_Scaffold",
             split_option=split_option,
             reference_scaffold_id_subset=[ref_subset] if ref_subset else None,
             query_scaffold_id_subset=[query_subset] if query_subset else None,
@@ -491,11 +510,11 @@ class TestSplits:
         # check that the ref and query scaffolds are the only ones included
         if ref_subset:
             assert all(
-                combined_df["Ref_Scaffold"].isin([ref_subset])
+                combined_df["RefData_Ref_Scaffold"].isin([ref_subset])
             ), f"Ref_Scaffold should only contain {ref_subset}"
         if query_subset:
             assert all(
-                combined_df["Query_Scaffold"].isin([query_subset])
+                combined_df["QueryData_Query_Scaffold"].isin([query_subset])
             ), f"Query_Scaffold should only contain {query_subset}"
 
         if split_option in (
@@ -507,7 +526,8 @@ class TestSplits:
             assert (
                 len(
                     combined_df[
-                        combined_df["Query_Scaffold"] == combined_df["Ref_Scaffold"]
+                        combined_df["QueryData_Query_Scaffold"]
+                        == combined_df["RefData_Ref_Scaffold"]
                     ]
                 )
                 == 0
@@ -549,8 +569,8 @@ class TestSplits:
         """Test that ScaffoldSplit raises appropriate errors for incompatible combinations."""
         with pytest.raises(ValueError):
             scaffold_split = ScaffoldSplit(
-                query_scaffold_id_column="Query_Scaffold",
-                reference_scaffold_id_column="Ref_Scaffold",
+                query_scaffold_id_column="QueryData_Query_Scaffold",
+                reference_scaffold_id_column="RefData_Ref_Scaffold",
                 split_option=split_option,
                 query_scaffold_id_subset=query_subset,
                 reference_scaffold_id_subset=ref_subset,
@@ -569,44 +589,44 @@ class TestSplits:
         # Test with threshold above which to include pairs
         ss_high = SimilaritySplit(
             n_reference_structures=3,
-            similarity_column="Tanimoto",
+            similarity_column="TanimotoComboData_Tanimoto",
             threshold=0.7,
             include_similar=True,
             higher_is_more_similar=True,
             query_ligand_column="Query_Ligand",
-            groupby={"Aligned": True},
+            groupby={"TanimotoComboData_Aligned": True},
         )
         result_high = ss_high.run(docking_data_model)
         assert len(result_high) == 1  # Should return single split
         df_high = result_high[0].dataframe
-        assert all(df_high["Tanimoto"] >= 0.7)
+        assert all(df_high["TanimotoComboData_Tanimoto"] >= 0.7)
         print(ss_high.get_records())
 
         # Test with threshold below which to include pairs
         ss_low = SimilaritySplit(
             n_reference_structures=3,
-            similarity_column="Tanimoto",
+            similarity_column="TanimotoComboData_Tanimoto",
             threshold=0.3,
             include_similar=False,
             higher_is_more_similar=True,
             query_ligand_column="Query_Ligand",
-            groupby={"Aligned": True},
+            groupby={"TanimotoComboData_Aligned": True},
         )
         result_low = ss_low.run(docking_data_model)
         assert len(result_low) == 1
         df_low = result_low[0].dataframe
-        assert all(df_low["Aligned"] == True)
-        assert all(df_low["Tanimoto"] < 0.3)
+        assert all(df_low["TanimotoComboData_Aligned"] == True)
+        assert all(df_low["TanimotoComboData_Tanimoto"] < 0.3)
 
         # Test with bootstrapping
         ss_boot = SimilaritySplit(
             n_reference_structures=3,
-            similarity_column="Tanimoto",
+            similarity_column="TanimotoComboData_Tanimoto",
             threshold=0.5,
             include_similar=True,
             higher_is_more_similar=True,
             query_ligand_column="Query_Ligand",
-            groupby={"Aligned": True},
+            groupby={"TanimotoComboData_Aligned": True},
         )
         result_boot = ss_boot.run(docking_data_model, bootstraps=5)
         assert len(result_boot) == 5
@@ -619,7 +639,7 @@ class TestSplits:
         with pytest.raises(ValueError):
             ss_invalid = SimilaritySplit(
                 n_reference_structures=3,
-                similarity_column="Tanimoto",
+                similarity_column="TanimotoComboData_Tanimoto",
                 threshold=1.5,  # Invalid threshold > 1
             )
             ss_invalid.run(docking_data_model)
@@ -642,21 +662,21 @@ class TestEvaluator:
         return DateSplit(
             n_reference_structures=3,
             reference_structure_column="Reference_Structure",
-            date_column="Date",
+            date_column="RefData_Date",
             randomize_by_n_days=3,
         )
 
     @pytest.fixture()
     def rmsd_scorer(self, docking_data_model):
-        return RMSDScorer()
+        return RMSDScorer(variable="PoseData_RMSD")
 
     @pytest.fixture()
     def posit_scorer(self, docking_data_model):
-        return POSITScorer()
+        return POSITScorer(variable="PoseData_POSIT_Probability")
 
     @pytest.fixture()
     def binary_evaluator(self, docking_data_model):
-        return BinaryEvaluation(variable="RMSD", cutoff=2)
+        return BinaryEvaluation(variable="PoseData_RMSD", cutoff=2)
 
     def test_evaluator(
         self,
@@ -678,10 +698,10 @@ class TestEvaluator:
         lig_total = len(ligs)
         fractions = []
         for df in dfs:
-            filtered = df.sort_values("RMSD").groupby("Query_Ligand").head(1)
+            filtered = df.sort_values("PoseData_RMSD").groupby("Query_Ligand").head(1)
             total = len(filtered)
             assert lig_total == total
-            fraction = filtered["RMSD"].apply(lambda x: x <= 2).sum() / total
+            fraction = filtered["PoseData_RMSD"].apply(lambda x: x <= 2).sum() / total
             fractions.append(SuccessRate(total=lig_total, fraction=fraction))
         manual = SuccessRate.from_replicates(fractions)
 
@@ -748,32 +768,6 @@ class TestEvaluator:
         assert ev == ev2
 
 
-def test_eval_on_local():
-    data = DockingDataModel.deserialize(
-        "/Users/alexpayne/Scientific_Projects/mers-drug-discovery/sars2-retrospective-analysis/ALL_combined_results.parquet"
-    )
-    evf = EvaluatorFactory(name="test")
-    evf.reference_split_settings.use = True
-    evf.reference_split_settings.date_split_settings.use = True
-    evf.reference_split_settings.date_split_settings.reference_structure_date_column = (
-        "Reference_Structure_Date"
-    )
-    evf.reference_split_settings.random_split_settings.use = True
-    evf.scorer_settings.rmsd_scorer_settings.use = True
-    evf.scorer_settings.posit_scorer_settings.use = True
-
-    evf.reference_split_settings.update_reference_settings.use = True
-    evf.reference_split_settings.update_reference_settings.use_logarithmic_scaling = (
-        True
-    )
-    evs = evf.create_evaluators(data)
-
-    results = Results.calculate_results(data, evs[0:2])
-
-    df = Results.df_from_results(results)
-    assert len(df) == 2
-
-
 class TestSettings:
 
     def test_similarity_settings_roundtrip(self, tmpdir):
@@ -803,7 +797,7 @@ class TestSettings:
         evf.reference_split_settings.use = True
         evf.reference_split_settings.date_split_settings.use = True
         evf.reference_split_settings.date_split_settings.reference_structure_date_column = (
-            "Date"
+            "RefData_Date"
         )
         evf.reference_split_settings.random_split_settings.use = True
         evs = evf.create_evaluators(docking_data_model)
@@ -814,10 +808,10 @@ class TestSettings:
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
-            "Query_Scaffold"
+            "QueryData_Query_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = (
-            "Ref_Scaffold"
+            "RefData_Ref_Scaffold"
         )
         evs = evf.create_evaluators(docking_data_model)
         assert len(evs) == 10
@@ -827,10 +821,10 @@ class TestSettings:
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
-            "Query_Scaffold"
+            "QueryData_Query_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = (
-            "Ref_Scaffold"
+            "RefData_Ref_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = (
             ScaffoldSplitOptions.X_TO_Y
@@ -843,10 +837,10 @@ class TestSettings:
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
-            "Query_Scaffold"
+            "QueryData_Query_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = (
-            "Ref_Scaffold"
+            "RefData_Ref_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = (
             ScaffoldSplitOptions.X_TO_NOT_X
@@ -863,10 +857,10 @@ class TestSettings:
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.use = True
         evf.pairwise_split_settings.scaffold_split_settings.query_scaffold_id_column = (
-            "Query_Scaffold"
+            "QueryData_Query_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.reference_scaffold_id_column = (
-            "Ref_Scaffold"
+            "RefData_Ref_Scaffold"
         )
         evf.pairwise_split_settings.scaffold_split_settings.scaffold_split_option = (
             ScaffoldSplitOptions.NOT_X_TO_X
@@ -884,7 +878,7 @@ class TestSettings:
         evf.pairwise_split_settings.similarity_split_settings.use = True
         evf.pairwise_split_settings.similarity_split_settings.include_similar = False
         evf.pairwise_split_settings.similarity_split_settings.similarity_groupby_dict = {
-            "Aligned": True
+            "TanimotoComboData_Aligned": True
         }
         evf.pairwise_split_settings.similarity_split_settings.update_reference_settings.use = (
             True
@@ -893,16 +887,27 @@ class TestSettings:
             True
         )
         evs = evf.create_evaluators(docking_data_model)
-        assert len(evs) == 462
+        # number of tanimoto values, number of references (1,2,5,10,20,50), 2 scoring functions
+        assert len(evs) == 21 * 6 * 2
 
     def test_similarity_split_with_fixed_references(self, docking_data_model):
         evf = EvaluatorFactory(name="test")
         evf.pairwise_split_settings.use = True
         evf.pairwise_split_settings.similarity_split_settings.use = True
         evf.pairwise_split_settings.similarity_split_settings.include_similar = False
+        evf.pairwise_split_settings.similarity_split_settings.similarity_column_name = (
+            "TanimotoComboData_Tanimoto"
+        )
         evf.pairwise_split_settings.similarity_split_settings.similarity_groupby_dict = {
-            "Aligned": True
+            "TanimotoComboData_Aligned": True
         }
+        evf.scorer_settings.posit_scorer_settings.posit_score_column_name = (
+            "PoseData_POSIT_Probability"
+        )
+        evf.scorer_settings.posit_scorer_settings.posit_score_column_name = (
+            "PoseData_RMSD"
+        )
+        evf.success_rate_evaluator_settings.success_rate_column = "PoseData_RMSD"
         evf.pairwise_split_settings.similarity_split_settings.n_reference_structures = [
             10
         ]
@@ -927,7 +932,7 @@ class TestResults:
                         n_reference_structures=5,
                     ),
                     scorer=RMSDScorer(),
-                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    evaluator=BinaryEvaluation(variable="PoseData_RMSD", cutoff=2.0),
                     n_bootstraps=100,
                 ),
                 success_rate=SuccessRate(
@@ -941,7 +946,7 @@ class TestResults:
                         n_reference_structures=10,
                     ),
                     scorer=RMSDScorer(),
-                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    evaluator=BinaryEvaluation(variable="PoseData_RMSD", cutoff=2.0),
                     n_bootstraps=100,
                 ),
                 success_rate=SuccessRate(
@@ -951,14 +956,14 @@ class TestResults:
             Results(
                 evaluator=Evaluator(
                     similarity_split=ScaffoldSplit(
-                        query_scaffold_id_column="Query_Scaffold",
-                        reference_scaffold_id_column="Ref_Scaffold",
+                        query_scaffold_id_column="QueryData_Query_Scaffold",
+                        reference_scaffold_id_column="RefData_Ref_Scaffold",
                         split_option=ScaffoldSplitOptions.X_TO_X,
                         query_scaffold_id_subset=["Scaffold_1"],
                         reference_scaffold_id_subset=["Scaffold_1"],
                     ),
                     scorer=RMSDScorer(),
-                    evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                    evaluator=BinaryEvaluation(variable="PoseData_RMSD", cutoff=2.0),
                     n_bootstraps=100,
                 ),
                 success_rate=SuccessRate(
@@ -1012,8 +1017,8 @@ class TestResults:
                     reference_structure_column="Reference_Structure",
                     n_reference_structures=5,
                 ),
-                scorer=RMSDScorer(),
-                evaluator=BinaryEvaluation(variable="RMSD", cutoff=2.0),
+                scorer=RMSDScorer(variable="PoseData_RMSD"),
+                evaluator=BinaryEvaluation(variable="PoseData_RMSD", cutoff=2.0),
                 n_bootstraps=100,
             )
         ]
