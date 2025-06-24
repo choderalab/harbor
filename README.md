@@ -23,6 +23,6 @@ This package is basically a wrapper / guide for using various packages such as S
 ```bash
 git clone git@github.com:choderalab/harbor.git
 cd harbor
-mamba env create -f devtools/environment_macos.yml
+mamba env create -f devtools/harbor.yaml
 pip install .
 ```
