@@ -1,15 +1,3 @@
-"""
-Expected Usage:
-python calculate_plip_interactions.py --yaml-input input.yaml --output-dir output_directory --ncpus 4
-
-Where `input.yaml` contains a mapping of names to directories containing PDB files, and `output_directory` is where the interaction CSV files will be saved.
-
-i.e. input.yaml:
-----------------
-crystal: 20250313_plip_analysis/crystal
-docked: 20250313_plip_analysis/docked
-"""
-
 from harbor.pli.plip_analysis_schema import PLIntReport
 from pathlib import Path
 import click
@@ -134,7 +122,22 @@ def process_structure_batch(
 def main(
     pdb_dir: Path, yaml_input: Path, output_dir: Path, ncpus: int, error_log: Path
 ):
-    """Get PLIP interactions"""
+    """
+    Get PLIP interactions
+
+    Basic usage, which create a csv file of the calculated interactions for all the pdb files in this directory:
+    harbor calculate-plip-interactions --pdb-dir directory_with_pdb_files
+
+    For more complex usage, you can provide a YAML file that maps names to directories containing PDB files:
+    harbor calculate-plip-interactions --yaml-input input.yaml --output-dir output_directory --ncpus 4
+
+    Where `input.yaml` contains a mapping of names to directories containing PDB files, and `output_directory` is where the interaction CSV files will be saved.
+
+    i.e. input.yaml:
+    ----------------
+    crystal: 20250313_plip_analysis/crystal
+    docked: 20250313_plip_analysis/docked
+    """
     output_dir.mkdir(exist_ok=True)
 
     if not yaml_input and not pdb_dir:

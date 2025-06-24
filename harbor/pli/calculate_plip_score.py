@@ -1,8 +1,3 @@
-"""
-Calculate PLIP interaction scores between two structures.
-Usually you would want to re-write this script to parallelize the analysis on your
-"""
-
 import pandas as pd
 
 from harbor.pli.plip_analysis_schema import (
@@ -35,6 +30,8 @@ def main(reference: Path, query: Path, output_dir: Path, fingerprint_level: str)
 
     REFERENCE: Path to the reference PLIP interaction report CSV file.
     QUERY: Path to the query PLIP interaction report CSV file.
+    FINGERPRINT_LEVEL: Level of fingerprint comparison (default is ALL) pulled from harbor.pli.plip_analysis_schema.FingerprintLevel
+    OUTPUT_DIR: Path to the output directory where results will be saved (default is current directory).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
