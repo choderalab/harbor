@@ -448,6 +448,16 @@ class TestDockingDataModel:
         assert set(docking_data_model.get_unique_refs()) == set(refs)
         assert len(docking_data_model.get_unique_refs()) == n_refs
 
+    @pytest.mark.parametrize(
+        "docking_data_model", ["simple", "tc", "complete"], indirect=True
+    )
+    def test_groupby(self, docking_data_model):
+        """Test that groupby works correctly."""
+        ogdf = docking_data_model.dataframe.copy()
+        groupby_columns = docking_data_model.get_groupby_columns()
+        grouped = ogdf.groupby(groupby_columns).head(1)
+        assert len(grouped) == len(ogdf)
+
 
 class TestSplits:
 

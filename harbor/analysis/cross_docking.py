@@ -292,13 +292,13 @@ class DockingDataModel(DataFrameModelBase):
             set([col for cols in self.value_columns_dict.values() for col in cols])
         )
 
-    def get_groupby_columns(self, except_cols: set = {}) -> list:
+    def get_groupby_columns(self, except_cols: tuple | list | set = ()) -> list:
         """
         If provided without any `except_cols`, this should return the original dataframe.
         :param except_cols:
         :return:
         """
-        if not isinstance(except_cols, list | set):
+        if not isinstance(except_cols, tuple | list | set):
             raise ValueError(
                 f"except_cols must be a list or set, not {type(except_cols)}"
             )
@@ -1040,15 +1040,16 @@ class PoseSelector(SorterBase):
     category: str = "PoseSelection"
 
     def run(self, data: DockingDataModel) -> DockingDataModel:
-        key_columns = data.get_groupby_columns(except_cols=["Pose_ID"])
+        newdata = data.model_copy()
+        key_columns = newdata.get_groupby_columns(except_cols=["Pose_ID"])
         sf = ColumnSortFilter(
             sort_column=self.variable,
             key_columns=key_columns,
             ascending=self.ascending,
             number_to_return=self.number_to_return,
         )
-        data.apply_filters([sf])
-        return data
+        newdata.apply_filters([sf])
+        return newdata
 
 
 class Scorer(SorterBase):
