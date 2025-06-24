@@ -104,16 +104,23 @@ def process_structure_batch(
 
 @click.command()
 @click.option(
+    "--pdb-dir",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to directory containing PDB files",
+    required=False,
+)
+@click.option(
     "--yaml-input",
     type=click.Path(exists=True, path_type=Path),
     help="Path to input yaml file containing name: path pairs",
-    required=True,
+    required=False,
 )
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
+    default=Path("./"),
     help="Path to output directory",
-    required=True,
+    required=False,
 )
 @click.option(
     "--ncpus", type=int, default=1, help="Number of cpus to use for parallel processing"
@@ -124,17 +131,26 @@ def process_structure_batch(
     help="Path to error log file",
     default="plip_errors.log",
 )
-def main(yaml_input: Path, output_dir: Path, ncpus: int, error_log: Path):
+def main(
+    pdb_dir: Path, yaml_input: Path, output_dir: Path, ncpus: int, error_log: Path
+):
     """Get PLIP interactions"""
     output_dir.mkdir(exist_ok=True)
-    all_errors = []
 
-    try:
-        with open(yaml_input, "r") as f:
-            input_dict = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        click.echo(f"Error reading YAML file: {e}", err=True)
+    if not yaml_input and not pdb_dir:
+        click.echo("Please provide either --pdb-dir or --yaml-input", err=True)
         raise click.Abort()
+
+    all_errors = []
+    if pdb_dir:
+        input_dict = {"default": pdb_dir}
+    elif yaml_input:
+        try:
+            with open(yaml_input, "r") as f:
+                input_dict = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            click.echo(f"Error reading YAML file: {e}", err=True)
+            raise click.Abort()
 
     for name, structure_dir in input_dict.items():
         structure_dir = Path(structure_dir)

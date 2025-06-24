@@ -488,12 +488,12 @@ class SimilarityScore(BaseModel):
         """
         Validate that the score is between 0 and 1.
         """
-        score = values.get("after")
+        score = values.get("score")
         if not (0 <= score <= 1):
             raise ValueError("Score must be between 0 and 1.")
         return values
 
-    @model_validator(mode="after")
+    @model_validator(mode="before")
     def check_interaction_counts(cls, values):
         """
         Validate that the interaction counts are non-negative and make sense.

@@ -17,12 +17,12 @@ import click
 @click.command()
 @click.argument("reference", type=click.Path(exists=True, path_type=Path))
 @click.argument("query", type=click.Path(exists=True, path_type=Path))
-@click.argument(
+@click.option(
     "-f",
     "--fingerprint-level",
     type=click.Choice([level.name for level in FingerprintLevel] + ["ALL"]),
     default="ALL",
-    help="Level of fingerprint analysis to use.",
+    help="Level of fingerprint comparison",
 )
 @click.option(
     "--output-dir",
@@ -46,6 +46,9 @@ def main(reference: Path, query: Path, output_dir: Path, fingerprint_level: str)
     scores = []
     if fingerprint_level == "ALL":
         for level in FingerprintLevel:
+            print(f"Calculating scores for fingerprint level: {level.name}")
+            print(f"Reference interactions: {len(reference_report.interactions)}")
+            print(f"Query interactions: {len(query_report.interactions)}")
             scores.append(
                 InteractionScore.from_fingerprints(
                     reference_report, query_report, level
