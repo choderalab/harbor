@@ -48,7 +48,7 @@ jobs:
     - name: Setup Conda Environment
       uses: mamba-org/setup-micromamba@v1
       with:
-        environment-file: devtools/environment.yml
+        environment-file: devtools/harbor.yaml
         environment-name: harbor
         cache-environment: true
         cache-downloads: true
