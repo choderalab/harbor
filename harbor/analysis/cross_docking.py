@@ -548,7 +548,7 @@ def get_unique_structures_randomized_by_date(
     candidate_list = []
     for i in range(bootstraps):
         # Get a random sample of the candidates
-        if len(candidates) > n_structures_to_return:
+        if len(candidates) >= n_structures_to_return:
             candidate_sample = np.random.choice(
                 candidates, size=n_structures_to_return, replace=False
             )
@@ -1655,11 +1655,11 @@ def generate_logarithmic_scale(n_max: int, base: int = 10) -> list[int]:
             scale.append(int(power * 5))
 
         # Add quarter values for larger numbers
-        if power >= 100:
-            if power * 1.5 <= n_max:
-                scale.append(int(power * 1.5))
-            if power * 2.5 <= n_max:
-                scale.append(int(power * 2.5))
+        if power >= 100 and n_max <= 200:
+            if power * 1.25 <= n_max:
+                scale.append(int(power * 1.25))
+            if power * 1.75 <= n_max:
+                scale.append(int(power * 1.75))
 
     # Add the maximum value if it's not already included
     if n_max not in scale:
