@@ -1236,6 +1236,22 @@ def get_class_from_name(name: str):
             return Evaluator
 
 
+def _bootstrap_worker(args):
+    """Standalone worker function for parallel bootstrap processing"""
+    bootstrap_idx, evaluator_json, pose_selected_data = args
+    try:
+        # Recreate evaluator from JSON
+        evaluator_data = json.loads(evaluator_json)
+        evaluator_copy = get_class_from_name(evaluator_data["type_"])(**evaluator_data)
+
+        # Process the bootstrap
+        result = evaluator_copy.process_single_bootstrap(pose_selected_data)
+        return bootstrap_idx, result
+    except Exception as e:
+        print(f"Error processing bootstrap {bootstrap_idx}: {e}")
+        return bootstrap_idx, None
+
+
 class Evaluator(ModelBase):
     name: str = "Evaluator"
     type_: str = "Evaluator"
@@ -1291,57 +1307,87 @@ class Evaluator(ModelBase):
         results = [self.evaluator.run(data_) for data_ in data_splits]
         return SuccessRate.from_replicates(results)
 
-    def process_single_bootstrap(self, data: DockingDataModel) -> any:
+    def process_single_bootstrap(self, pose_selected_data: DockingDataModel) -> any:
         """Process a single bootstrap replicate through the entire pipeline"""
-        # Apply pose selector
-        pose_selected = self.run_pose_selector([data])
+        # Start with pose-selected data
+        current_data = [pose_selected_data]
 
-        # Create single bootstrap replicate
-        if self.dataset_split is not None:
-            bootstrap_data = []
-            for data_ in pose_selected:
-                # Get single bootstrap replicate
-                splits = self.dataset_split.run(data_, bootstraps=1)
-                bootstrap_data.extend(splits)
-        else:
-            bootstrap_data = pose_selected
-
-        # Apply similarity split if needed
+        # Apply splits based on order preference
         if self.dataset_before_similarity:
-            split_data = self.run_similarity_split(bootstrap_data)
-        else:
-            split_data = self.run_similarity_split(bootstrap_data)
+            # Dataset split first (creates bootstrap if needed)
             if self.dataset_split is not None:
-                # This path shouldn't create multiple bootstraps since we already have our single bootstrap
-                split_data = bootstrap_data
+                bootstrap_splits = self.dataset_split.run(current_data[0], bootstraps=1)
+                current_data = bootstrap_splits
+
+            # Then similarity split
+            current_data = self.run_similarity_split(current_data)
+        else:
+            # Similarity split first
+            current_data = self.run_similarity_split(current_data)
+
+            # Then dataset split (creates bootstrap if needed)
+            if self.dataset_split is not None:
+                bootstrap_splits = self.dataset_split.run(current_data[0], bootstraps=1)
+                current_data = bootstrap_splits
 
         # Score the data
-        scored_data = self.run_scorer(split_data)
+        current_data = self.run_scorer(current_data)
 
-        # Evaluate and return result
-        result = self.evaluator.run(scored_data[0]) if scored_data else None
+        # Evaluate - take first result if multiple
+        if current_data:
+            result = self.evaluator.run(current_data[0])
+            return result
+        else:
+            return None
 
-        # Clean up intermediate data to help with memory management
-        del bootstrap_data, split_data, scored_data
+    def run(self, data: DockingDataModel, n_cpus: int = 1) -> SuccessRate:
+        """
+        Memory-efficient version that processes bootstraps sequentially or in parallel
 
-        return result
+        Args:
+            data: Input docking data
+            n_cpus: Number of CPUs to use for parallel processing. If 1, runs sequentially.
+        """
+        # Apply pose selector once - this doesn't change between bootstraps
+        pose_selected = self.run_pose_selector([data])
+        pose_selected_data = pose_selected[0]  # Should be a single DockingDataModel
 
-    def run(self, data: DockingDataModel) -> SuccessRate:
-        """Memory-efficient version that processes bootstraps sequentially"""
         all_results = []
 
-        # Process each bootstrap replicate sequentially
-        for bootstrap_idx in range(self.n_bootstraps):
-            try:
-                result = self.process_single_bootstrap(data)
-                if result is not None:
-                    all_results.append(result)
-            except Exception as e:
-                # Log the error but continue with other bootstraps
-                print(f"Error processing bootstrap {bootstrap_idx}: {e}")
-                continue
+        if n_cpus == 1:
+            # Sequential processing
+            for bootstrap_idx in range(self.n_bootstraps):
+                try:
+                    result = self.process_single_bootstrap(pose_selected_data)
+                    if result is not None:
+                        all_results.append(result)
+                except Exception as e:
+                    print(f"Error processing bootstrap {bootstrap_idx}: {e}")
+                    continue
+        else:
+            # Parallel processing
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            import multiprocessing as mp
 
-        # Return aggregated results
+            n_cpus = min(n_cpus, mp.cpu_count())
+
+            # Create worker arguments
+            worker_args = [
+                (bootstrap_idx, self.to_json_str(), pose_selected_data)
+                for bootstrap_idx in range(self.n_bootstraps)
+            ]
+
+            with ProcessPoolExecutor(max_workers=n_cpus) as executor:
+                future_to_idx = {
+                    executor.submit(_bootstrap_worker, args): args[0]
+                    for args in worker_args
+                }
+
+                for future in as_completed(future_to_idx):
+                    bootstrap_idx, result = future.result()
+                    if result is not None:
+                        all_results.append(result)
+
         return SuccessRate.from_replicates(all_results)
 
     @field_validator(
@@ -1415,19 +1461,19 @@ class Results(BaseModel):
 
     @classmethod
     def calculate_result(
-        cls, evaluator: Evaluator, data: DockingDataModel
+        cls, evaluator: Evaluator, data: DockingDataModel, n_cpus: int = 1
     ) -> "Results":
-        result = evaluator.run(data)
+        result = evaluator.run(data, n_cpus=n_cpus)
         return cls(evaluator=evaluator, success_rate=result)
 
     @classmethod
     def calculate_results(
-        cls, data: DockingDataModel, evaluators: list[Evaluator]
+        cls, data: DockingDataModel, evaluators: list[Evaluator], n_cpus: int = 1
     ) -> list["Results"]:
         data_copies = [data.__deepcopy__() for ev in evaluators]
         results = []
         for data, ev in tqdm(zip(data_copies, evaluators), total=len(evaluators)):
-            result = ev.run(data)
+            result = ev.run(data, n_cpus=n_cpus)
             results.append(cls(evaluator=ev, success_rate=result))
         return results
 
