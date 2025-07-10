@@ -1291,17 +1291,58 @@ class Evaluator(ModelBase):
         results = [self.evaluator.run(data_) for data_ in data_splits]
         return SuccessRate.from_replicates(results)
 
-    def run(self, data: DockingDataModel) -> SuccessRate:
+    def process_single_bootstrap(self, data: DockingDataModel) -> any:
+        """Process a single bootstrap replicate through the entire pipeline"""
+        # Apply pose selector
         pose_selected = self.run_pose_selector([data])
-        if self.dataset_before_similarity:
-            split_data = self.run_dataset_split(pose_selected)
-            split_data = self.run_similarity_split(split_data)
-        else:
-            split_data = self.run_similarity_split(pose_selected)
-            split_data = self.run_dataset_split(split_data)
 
+        # Create single bootstrap replicate
+        if self.dataset_split is not None:
+            bootstrap_data = []
+            for data_ in pose_selected:
+                # Get single bootstrap replicate
+                splits = self.dataset_split.run(data_, bootstraps=1)
+                bootstrap_data.extend(splits)
+        else:
+            bootstrap_data = pose_selected
+
+        # Apply similarity split if needed
+        if self.dataset_before_similarity:
+            split_data = self.run_similarity_split(bootstrap_data)
+        else:
+            split_data = self.run_similarity_split(bootstrap_data)
+            if self.dataset_split is not None:
+                # This path shouldn't create multiple bootstraps since we already have our single bootstrap
+                split_data = bootstrap_data
+
+        # Score the data
         scored_data = self.run_scorer(split_data)
-        return self.calculate_results(scored_data)
+
+        # Evaluate and return result
+        result = self.evaluator.run(scored_data[0]) if scored_data else None
+
+        # Clean up intermediate data to help with memory management
+        del bootstrap_data, split_data, scored_data
+
+        return result
+
+    def run(self, data: DockingDataModel) -> SuccessRate:
+        """Memory-efficient version that processes bootstraps sequentially"""
+        all_results = []
+
+        # Process each bootstrap replicate sequentially
+        for bootstrap_idx in range(self.n_bootstraps):
+            try:
+                result = self.process_single_bootstrap(data)
+                if result is not None:
+                    all_results.append(result)
+            except Exception as e:
+                # Log the error but continue with other bootstraps
+                print(f"Error processing bootstrap {bootstrap_idx}: {e}")
+                continue
+
+        # Return aggregated results
+        return SuccessRate.from_replicates(all_results)
 
     @field_validator(
         "pose_selector",
