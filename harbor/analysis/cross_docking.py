@@ -1370,6 +1370,9 @@ class Evaluator(ModelBase):
             import multiprocessing as mp
 
             n_cpus = min(n_cpus, mp.cpu_count())
+            print(
+                f"Running {self.n_bootstraps} bootstraps in parallel using {n_cpus} CPUs."
+            )
 
             # Create worker arguments
             worker_args = [
