@@ -995,8 +995,72 @@ class ScaffoldSplit(PairwiseSplitBase):
         return [DockingDataModel(dataframe=df, **data.model_dump())]
 
 
+class ScaffoldDateSplit(ReferenceStructureSplitBase):
+    """
+    Returns results stuch that query structures are only docked to the first structure for each scaffold.
+    """
+
+    name: str = "ScaffoldDateSplit"
+    type_: str = "ScaffoldDateSplit"
+    date_column: str = Field(
+        ...,
+        description="Column corresponding to date deposition",
+    )
+    scaffold_id_column: str = Field(
+        ..., description="Column corresponding to the scaffold ID of the ligand"
+    )
+    randomize_by_n_days: int = Field(
+        0,
+        description="Randomize the structures by n days. If 0 no randomization is done. If 1 or greater, for each structure, it can be randomly replaced by any other structure collected on that day or n-1 days from it's collection date.",
+    )
+
+    def get_records(self) -> dict:
+        records = super().get_records()
+        records.update(
+            {
+                "Randomize_by_N_Days": self.randomize_by_n_days,
+                "Date_Column": self.date_column,
+                "Scaffold_ID_Column": self.scaffold_id_column,
+            }
+        )
+        return records
+
+    def run(self, data: DockingDataModel, bootstraps=1) -> [DockingDataModel]:
+        unique_refs = (
+            data.dataframe.sort_values(self.date_column)
+            .groupby(self.scaffold_id_column)
+            .head(1)[self.reference_structure_column]
+            .unique()
+        )
+
+        filtered_df = data.dataframe[
+            data.dataframe[self.reference_structure_column].isin(unique_refs)
+        ]
+
+        if self.n_reference_structures is None:
+            self.n_reference_structures = len(unique_refs)
+
+        ref_lists = get_unique_structures_randomized_by_date(
+            filtered_df,
+            self.reference_structure_column,
+            self.date_column,
+            self.n_reference_structures,
+            self.randomize_by_n_days,
+            bootstraps=bootstraps,
+        )
+        return [
+            DockingDataModel(
+                dataframe=data.dataframe[
+                    data.dataframe[self.reference_structure_column].isin(ref_list)
+                ],
+                **data.model_dump(),
+            )
+            for ref_list in ref_lists
+        ]
+
+
 # TODO: There might be a better way to do this.
-ReferenceSplitType = RandomSplit | DateSplit
+ReferenceSplitType = RandomSplit | DateSplit | ScaffoldDateSplit
 SimilaritySplitType = SimilaritySplit | ScaffoldSplit
 
 
