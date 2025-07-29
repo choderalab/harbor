@@ -1013,6 +1013,9 @@ class ScaffoldDateSplit(ReferenceStructureSplitBase):
         0,
         description="Randomize the structures by n days. If 0 no randomization is done. If 1 or greater, for each structure, it can be randomly replaced by any other structure collected on that day or n-1 days from it's collection date.",
     )
+    n_refs_per_scaffold: Optional[int] = Field(
+        1, description="Number of reference structures per scaffold"
+    )
 
     def get_records(self) -> dict:
         records = super().get_records()
@@ -1029,7 +1032,7 @@ class ScaffoldDateSplit(ReferenceStructureSplitBase):
         unique_refs = (
             data.dataframe.sort_values(self.date_column)
             .groupby(self.scaffold_id_column)
-            .head(1)[self.reference_structure_column]
+            .head(self.n_refs_per_scaffold)[self.reference_structure_column]
             .unique()
         )
 
