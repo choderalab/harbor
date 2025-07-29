@@ -1284,6 +1284,8 @@ def get_class_from_name(name: str):
             return SimilaritySplit
         case "ScaffoldSplit":
             return ScaffoldSplit
+        case "ScaffoldDateSplit":
+            return ScaffoldDateSplit
         case "Scorer":
             return Scorer
         case "RMSDScorer":
