@@ -1024,6 +1024,7 @@ class ScaffoldDateSplit(ReferenceStructureSplitBase):
                 "Randomize_by_N_Days": self.randomize_by_n_days,
                 "Date_Column": self.date_column,
                 "Scaffold_ID_Column": self.scaffold_id_column,
+                "N_Refs_Per_Scaffold": self.n_refs_per_scaffold,
             }
         )
         return records
