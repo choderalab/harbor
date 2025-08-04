@@ -713,12 +713,30 @@ class SimilaritySplit(PairwiseSplitBase):
         True,
         description="If True, include structures that are more similar than the threshold. Otherwise, include structures that are less similar.",
     )
+    sort_instead_of_threshold: bool = Field(
+        False,
+        description="If True, sort the structures by similarity and take the top N reference structures. Otherwise, use the threshold to determine similarity.",
+    )
+    n_similar: Optional[int] = Field(
+        None, description="Number of similar structures to return"
+    )
     deterministic: bool = True
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
-        if self.n_reference_structures != -1:
+        if not self.sort_instead_of_threshold and self.n_reference_structures != -1:
             self.deterministic = False
+        if (
+            self.sort_instead_of_threshold
+            and self.n_similar is None
+            or self.n_similar == -1
+        ):
+            raise NotImplementedError(
+                "n_similar must be set if sort_instead_of_threshold is True"
+            )
+        else:
+            self.deterministic = True
+
         return self
 
     def run(self, data: DockingDataModel, bootstraps=1) -> [pd.DataFrame]:
@@ -728,34 +746,50 @@ class SimilaritySplit(PairwiseSplitBase):
         for key, value in self.groupby.items():
             df = df[df[key] == value]
 
-        # if include similar True and higher is MORE similar, or if similar False and higher is LESS similar
-        if self.include_similar == self.higher_is_more_similar:
-            df = df[df[self.similarity_column] >= self.threshold]
+        if self.sort_instead_of_threshold:
 
-        # if include similar True and higher is LESS similar, or if similar False and higher is MORE similar
-        elif self.include_similar != self.higher_is_more_similar:
-            df = df[df[self.similarity_column] <= self.threshold]
+            # this logic takes a moment but this makes sure we are sorting in the correct direction
+            ascending = not self.include_similar == self.higher_is_more_similar
 
-        if self.n_reference_structures is None:
+            df = (
+                df.sort_values(self.similarity_column, ascending=ascending)
+                .groupby(self.query_ligand_column)
+                .apply(lambda x: x.head(self.n_similar))
+                .reset_index(drop=True)
+            )
+
             return [DockingDataModel(dataframe=df, **data.model_dump())]
+
         else:
-            return [
-                DockingDataModel(
-                    dataframe=(
-                        df.groupby(self.query_ligand_column)
-                        .apply(
-                            lambda x: (
-                                x
-                                if len(x) <= self.n_reference_structures
-                                else x.sample(n=self.n_reference_structures)
+
+            # if include similar True and higher is MORE similar, or if similar False and higher is LESS similar
+            if self.include_similar == self.higher_is_more_similar:
+                df = df[df[self.similarity_column] >= self.threshold]
+
+            # if include similar True and higher is LESS similar, or if similar False and higher is MORE similar
+            elif self.include_similar != self.higher_is_more_similar:
+                df = df[df[self.similarity_column] <= self.threshold]
+
+            if self.n_reference_structures is None:
+                return [DockingDataModel(dataframe=df, **data.model_dump())]
+            else:
+                return [
+                    DockingDataModel(
+                        dataframe=(
+                            df.groupby(self.query_ligand_column)
+                            .apply(
+                                lambda x: (
+                                    x
+                                    if len(x) <= self.n_reference_structures
+                                    else x.sample(n=self.n_reference_structures)
+                                )
                             )
-                        )
-                        .reset_index(drop=True)
-                    ),
-                    **data.model_dump(),
-                )
-                for _ in range(bootstraps)
-            ]
+                            .reset_index(drop=True)
+                        ),
+                        **data.model_dump(),
+                    )
+                    for _ in range(bootstraps)
+                ]
 
     def get_records(self) -> dict:
         records = super().get_records()
@@ -766,6 +800,8 @@ class SimilaritySplit(PairwiseSplitBase):
                 "Similarity_Threshold": self.threshold,
                 "Include_Similar": self.include_similar,
                 "Higher_Is_More_Similar": self.higher_is_more_similar,
+                "Sort_Instead_Of_Threshold": self.sort_instead_of_threshold,
+                "N_Similar": self.n_similar,
             }
         )
         records.update({key: value for key, value in self.groupby.items()})
