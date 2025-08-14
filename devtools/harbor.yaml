@@ -3,7 +3,7 @@ channels:
   - openeye
   - conda-forge
 dependencies:
-  - python=3.10
+  - python=3.11
   - scikit-learn
   - pydantic
   - ca-certificates
@@ -22,3 +22,13 @@ dependencies:
   - pytest-console-scripts
   - pytest-timeout
   - pytest-xdist
+  - pytorch
+  - mols2grid
+  - blackd
+  - pyarrow
+  - seaborn
+  - bokeh
+  - ipykernel
+  - plip
+  - pebble
+prefix: /Users/alexpayne/miniforge-pypy3/envs/harbor

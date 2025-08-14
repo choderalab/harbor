@@ -25,6 +25,7 @@ dependencies = []
 "Bug Tracker" = "https://github.com/choderalab/harbor/issues"
 
 [project.scripts]
+harbor = "harbor.cli:cli"
 
 
 [tool.setuptools.packages.find]
