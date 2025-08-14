@@ -5,10 +5,11 @@
 version: 2
 
 # Set the OS, Python version, and other tools you might need
+# ALEX EDIT 20250814: I have no idea why this is set to mambaforge-22.9, but we used it in drugforge and it works
 build:
-  os: ubuntu-24.04
+  os: ubuntu-22.04
   tools:
-    python: "3.13"
+    python: "mambaforge-22.9"
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
