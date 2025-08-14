@@ -1,0 +1,44 @@
+name: docs
+channels:
+  - openeye
+  - conda-forge
+dependencies:
+  - python=3.11
+  - scikit-learn
+  - pydantic
+  - ca-certificates
+  - openssl
+  - pytest
+  - pandas
+  - black
+  - plotly
+  - jupyter
+  - openeye-toolkits
+  - rdkit
+  - certifi
+  - openff-toolkit
+  - pytest-cov
+  - codecov
+  - pytest-console-scripts
+  - pytest-timeout
+  - pytest-xdist
+  - pytorch
+  - mols2grid
+  - blackd
+  - pyarrow
+  - seaborn
+  - bokeh
+  - ipykernel
+  - plip
+  - pebble
+
+  # docs
+  - nbsphinx
+  - sphinx
+  - sphinx_rtd_theme
+  - myst-parser
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc
+  - docutils >=0.18.1,<0.21 # see #1260
+
