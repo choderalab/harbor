@@ -6,11 +6,13 @@ This page details how to get started with `harbor` and how to install it on your
 There are two ways to install `asapdiscovery`:
 
 1. From conda-forge (recommended)
-2Developer installation from source
+2. Developer installation from source
 
 Installation from conda-forge
 ----------------------------
-
+```{note}
+This is underway!
+```
 
 Developer installation from source
 ----------------------------------
