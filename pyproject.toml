@@ -1,38 +1,38 @@
 [build-system]
-requires = ["setuptools>=61.0", "versioningit"]
 build-backend = "setuptools.build_meta"
+
+requires = [ "setuptools>=61", "versioningit" ]
 
 [project]
 name = "harbor"
-#version = "0.0.1"
-dynamic = ["version"]
-authors = [
-  { name="Alexander Matthew Payne", email="alex.payne@choderalab.org" },
-]
 description = "A port for docking evaluation and assessment"
 readme = "README.md"
-requires-python = ">=3.9,<3.12"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
+authors = [
+  { name = "Alexander Matthew Payne", email = "alex.payne@choderalab.org" },
 ]
-dependencies = []
+requires-python = ">=3.9"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dynamic = [ "version" ]
+dependencies = [  ]
 
-[project.urls]
-"Homepage" = "https://github.com/choderalab/harbor"
-"Bug Tracker" = "https://github.com/choderalab/harbor/issues"
-
-[project.scripts]
-harbor = "harbor.cli:cli"
-
+urls."Bug Tracker" = "https://github.com/choderalab/harbor/issues"
+urls."Homepage" = "https://github.com/choderalab/harbor"
+scripts.harbor = "harbor.cli:cli"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [ "." ]
 
 [tool.versioningit]
-
 
 [tool.versioningit.vcs]
 default-tag = "0.0.99" # useful for CI/shallow clones
