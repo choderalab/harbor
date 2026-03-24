@@ -107,6 +107,7 @@ class DataFrameType(StrEnum):
     PAIRED = "PairedData"
     POSE = "PoseData"
     CHEMICAL_SIMILARITY = "ChemicalSimilarityData"
+    STRUCTURE_SIMILARITY = "StructureSimilarityData"
     COMBINED = "CombinedData"
 
     def __or__(self, other):
