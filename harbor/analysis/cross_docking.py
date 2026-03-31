@@ -1344,19 +1344,23 @@ def get_class_from_name(name: str):
 
 
 def _bootstrap_worker(args):
-    """Standalone worker function for parallel bootstrap processing"""
-    bootstrap_idx, evaluator_json, pose_selected_data = args
-    try:
-        # Recreate evaluator from JSON
-        evaluator_data = json.loads(evaluator_json)
-        evaluator_copy = get_class_from_name(evaluator_data["type_"])(**evaluator_data)
+    """Standalone worker function for parallel bootstrap processing.
 
-        # Process the bootstrap
-        result = evaluator_copy.process_single_bootstrap(pose_selected_data)
-        return bootstrap_idx, result
-    except Exception as e:
-        print(f"Error processing bootstrap {bootstrap_idx}: {e}")
-        return bootstrap_idx, None
+    Runs a chunk of bootstraps sequentially within one process.
+    """
+    chunk_size, evaluator_json, pose_selected_data = args
+    evaluator_data = json.loads(evaluator_json)
+    evaluator_copy = get_class_from_name(evaluator_data["type_"])(**evaluator_data)
+
+    results = []
+    for _ in range(chunk_size):
+        try:
+            result = evaluator_copy.process_single_bootstrap(pose_selected_data)
+            if result is not None:
+                results.append(result)
+        except Exception as e:
+            print(f"Error processing bootstrap: {e}")
+    return results
 
 
 class Evaluator(ModelBase):
@@ -1477,26 +1481,22 @@ class Evaluator(ModelBase):
             import multiprocessing as mp
 
             n_cpus = min(n_cpus, mp.cpu_count())
-            print(
-                f"Running {self.n_bootstraps} bootstraps in parallel using {n_cpus} CPUs."
-            )
 
-            # Create worker arguments
+            # Divide bootstraps into n_cpus chunks so each worker pays
+            # the pickling/reconstruction cost only once per process.
+            base_chunk, remainder = divmod(self.n_bootstraps, n_cpus)
+            chunk_sizes = [
+                base_chunk + (1 if i < remainder else 0) for i in range(n_cpus)
+            ]
+            evaluator_json = self.to_json_str()
             worker_args = [
-                (bootstrap_idx, self.to_json_str(), pose_selected_data)
-                for bootstrap_idx in range(self.n_bootstraps)
+                (chunk_size, evaluator_json, pose_selected_data)
+                for chunk_size in chunk_sizes
             ]
 
             with ProcessPoolExecutor(max_workers=n_cpus) as executor:
-                future_to_idx = {
-                    executor.submit(_bootstrap_worker, args): args[0]
-                    for args in worker_args
-                }
-
-                for future in as_completed(future_to_idx):
-                    bootstrap_idx, result = future.result()
-                    if result is not None:
-                        all_results.append(result)
+                for chunk_results in executor.map(_bootstrap_worker, worker_args):
+                    all_results.extend(chunk_results)
 
         return SuccessRate.from_replicates(all_results)
 
