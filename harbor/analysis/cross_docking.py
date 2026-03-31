@@ -726,67 +726,93 @@ class SimilaritySplit(PairwiseSplitBase):
     @model_validator(mode="after")
     def validate_model(self) -> Self:
         if not self.sort_instead_of_threshold and self.n_reference_structures != -1:
+            # Threshold mode with random downsampling: each bootstrap draws a different
+            # random sample of up to n_reference_structures per query, so the result
+            # is non-deterministic across bootstraps.
+            # (n_reference_structures == -1 is a sentinel meaning "use all", which would
+            # be deterministic, but that case falls through to the else branch.)
             self.deterministic = False
-        if (
-            self.sort_instead_of_threshold
-            and self.n_similar is None
-            or self.n_similar == -1
+        elif self.sort_instead_of_threshold and (
+            self.n_similar is None or self.n_similar == -1
         ):
+            # Sort mode requires knowing how many top-N structures to keep.
+            # Without n_similar we cannot truncate the sorted list, so raise early
+            # rather than silently returning an unbounded result.
+            # NOTE: the original code had an operator-precedence bug here —
+            #   `A and B or C` evaluates as `(A and B) or C`, meaning
+            #   `n_similar == -1` was checked unconditionally (not gated on
+            #   sort_instead_of_threshold). The parentheses above fix that.
             raise NotImplementedError(
                 "n_similar must be set if sort_instead_of_threshold is True"
             )
         else:
+            # Covers two cases that are both deterministic:
+            #   1. Threshold mode with n_reference_structures == -1 (use all matches,
+            #      no random sampling, so same result every time).
+            #   2. Sort mode with a valid n_similar (top-N is a stable operation given
+            #      a fixed sort order, so same result every time).
             self.deterministic = True
 
         return self
 
-    def run(self, data: DockingDataModel, bootstraps=1) -> [pd.DataFrame]:
+    def run(self, data: DockingDataModel, bootstraps=1) -> list[DockingDataModel]:
         df = data.dataframe
 
-        # first just get the necessary data
+        # Apply any pre-filters specified in groupby
         for key, value in self.groupby.items():
             df = df[df[key] == value]
 
         if self.sort_instead_of_threshold:
-
-            # this logic takes a moment but this makes sure we are sorting in the correct direction
-            ascending = not self.include_similar == self.higher_is_more_similar
-
-            df = (
+            # Sort so the most-relevant rows come first, then keep the top n per query.
+            # We want ascending order when we're including dissimilar rows (low values first)
+            # and descending when we're including similar rows (high values first).
+            # XOR: ascending iff include_similar != higher_is_more_similar
+            ascending = self.include_similar != self.higher_is_more_similar
+            n_similar = self.n_similar
+            grouped = (
                 df.sort_values(self.similarity_column, ascending=ascending)
                 .groupby(self.query_ligand_column)
-                .apply(lambda x: x.head(self.n_similar))
-                .reset_index(drop=True)
+                .apply(lambda x: x.head(n_similar), include_groups=False)
             )
-
+            # include_groups=False drops the groupby key from the result; restore it from the index
+            grouped[self.query_ligand_column] = grouped.index.get_level_values(0)
+            df = grouped.reset_index(drop=True)
             return [DockingDataModel(dataframe=df, **data.model_dump())]
 
         else:
-
-            # if include similar True and higher is MORE similar, or if similar False and higher is LESS similar
+            # Threshold-based filtering.
+            # Keep rows above threshold when: include_similar=True & higher_is_more_similar=True
+            #                              or include_similar=False & higher_is_more_similar=False
+            # Keep rows below threshold otherwise.
             if self.include_similar == self.higher_is_more_similar:
                 df = df[df[self.similarity_column] >= self.threshold]
-
-            # if include similar True and higher is LESS similar, or if similar False and higher is MORE similar
-            elif self.include_similar != self.higher_is_more_similar:
+            else:
                 df = df[df[self.similarity_column] <= self.threshold]
 
             if self.n_reference_structures is None:
                 return [DockingDataModel(dataframe=df, **data.model_dump())]
             else:
+                # For each bootstrap, randomly downsample references per query to n_reference_structures
+                n_ref = self.n_reference_structures
+
+                def _sample_references(group):
+                    if len(group) <= n_ref:
+                        return group
+                    return group.sample(n=n_ref)
+
+                def _apply_sample(df_):
+                    grouped = df_.groupby(self.query_ligand_column).apply(
+                        _sample_references, include_groups=False
+                    )
+                    # include_groups=False drops the groupby key; restore it from the index
+                    grouped[self.query_ligand_column] = grouped.index.get_level_values(
+                        0
+                    )
+                    return grouped.reset_index(drop=True)
+
                 return [
                     DockingDataModel(
-                        dataframe=(
-                            df.groupby(self.query_ligand_column)
-                            .apply(
-                                lambda x: (
-                                    x
-                                    if len(x) <= self.n_reference_structures
-                                    else x.sample(n=self.n_reference_structures)
-                                )
-                            )
-                            .reset_index(drop=True)
-                        ),
+                        dataframe=_apply_sample(df),
                         **data.model_dump(),
                     )
                     for _ in range(bootstraps)
