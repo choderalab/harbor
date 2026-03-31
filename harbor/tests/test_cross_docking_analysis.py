@@ -1148,3 +1148,28 @@ class TestGetUniqueStructuresRandomizedByDate:
                 n_structures_to_return=1,
                 n_days_to_randomize=2,
             )
+
+
+class TestSpeed:
+
+    @pytest.mark.parametrize("n_cpus", [1, 2, 6, 12])
+    def test_evaluator_speed(self, docking_data_model, n_cpus):
+        ev = Evaluator(
+            dataset_split=RandomSplit(
+                reference_structure_column="Reference_Structure",
+                # n_reference_structures,
+            ),
+            scorer=RMSDScorer(variable="PoseData_RMSD"),
+            evaluator=BinaryEvaluation(variable="PoseData_RMSD", cutoff=2.0),
+            n_bootstraps=1000,
+        )
+
+        import time
+
+        start_time = time.perf_counter()
+        success_rate = ev.run(docking_data_model, n_cpus=n_cpus)
+        total_time = time.perf_counter() - start_time
+
+        assert total_time < 20
+
+        print(f"Evaluator: {total_time:.3f} seconds")
