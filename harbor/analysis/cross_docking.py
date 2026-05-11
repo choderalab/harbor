@@ -1844,6 +1844,9 @@ class SuccessRateSettings(EvaluatorSettingsBase):
     rmsd_cutoff: float = Field(
         2.0, description="RMSD cutoff to label the resulting poses as successful"
     )
+    below_cutoff_is_good: bool = Field(
+        True, description="Whether values below (True) or above (False) the cutoff are successes"
+    )
 
 
 def generate_logarithmic_scale(n_max: int, base: int = 10) -> list[int]:
@@ -2161,6 +2164,7 @@ class EvaluatorFactory(SettingsBase):
             BinaryEvaluation(
                 variable=self.success_rate_evaluator_settings.success_rate_column,
                 cutoff=self.success_rate_evaluator_settings.rmsd_cutoff,
+                below_cutoff_is_good=self.success_rate_evaluator_settings.below_cutoff_is_good,
             )
         ]
 

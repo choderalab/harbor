@@ -194,7 +194,7 @@ def plip_constructor(plip: PLInteraction) -> list[ProteinLigandInteraction]:
             output_interaction_type = InteractionType.HydrophobicInteraction
 
         elif interaction_type == "pication":
-            output_interaction_type = InteractionType.PiStacking
+            output_interaction_type = InteractionType.PiCation
             protein_charge = (
                 FormalCharge.Positive
                 if interaction.protcharged
