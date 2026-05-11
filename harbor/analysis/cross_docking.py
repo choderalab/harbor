@@ -1,4 +1,5 @@
 import itertools
+import logging
 import time
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from typing_extensions import Self
@@ -14,6 +15,8 @@ import yaml
 from enum import Enum, StrEnum
 from operator import eq, gt, lt, ge, le, ne
 from pydantic import confloat
+
+logger = logging.getLogger(__name__)
 
 
 class Operator(StrEnum):
@@ -382,7 +385,7 @@ class DockingDataModel(DataFrameModelBase):
             model_dataframe = self.dataframe.groupby(relevant_columns)[
                 relevant_columns
             ].head(1)
-            print(model_name, model_type, relevant_columns)
+            logger.debug(f"{model_name} {model_type} {relevant_columns}")
 
             # rename columns
             param_columns = [
@@ -1382,7 +1385,7 @@ def _bootstrap_worker(args):
         result = evaluator_copy.process_single_bootstrap(pose_selected_data)
         return bootstrap_idx, result
     except Exception as e:
-        print(f"Error processing bootstrap {bootstrap_idx}: {e}")
+        logger.error(f"Error processing bootstrap {bootstrap_idx}: {e}")
         return bootstrap_idx, None
 
 
@@ -1397,7 +1400,7 @@ def _bootstrap_chunk_worker(args):
             result = evaluator_copy.process_single_bootstrap(pose_selected_data)
             results.append((idx, result))
         except Exception as e:
-            print(f"Error processing bootstrap {idx}: {e}")
+            logger.error(f"Error processing bootstrap {idx}: {e}")
             results.append((idx, None))
     return results
 
@@ -1516,17 +1519,16 @@ class Evaluator(ModelBase):
                     if result is not None:
                         all_results.append(result)
                 except Exception as e:
-                    print(f"Error processing bootstrap {bootstrap_idx}: {e}")
+                    logger.error(f"Error processing bootstrap {bootstrap_idx}: {e}")
                     continue
+            logger.info(f"Total time: {t_bootstrap_total:.1f}s  per bootstrap: {t_bootstrap_total/self.n_bootstraps:.3f}s")
         else:
             # Parallel processing
             from concurrent.futures import ProcessPoolExecutor, as_completed
             import multiprocessing as mp
 
             n_cpus = min(n_cpus, mp.cpu_count())
-            print(
-                f"Running {self.n_bootstraps} bootstraps in parallel using {n_cpus} CPUs."
-            )
+            logger.info(f"Running {self.n_bootstraps} bootstraps in parallel using {n_cpus} CPUs.")
 
             # Chunk bootstraps so pose_selected_data is pickled once per worker, not once per bootstrap
             indices = list(range(self.n_bootstraps))
@@ -1630,10 +1632,10 @@ class Results(BaseModel):
         results = []
         n = len(evaluators)
         for i, ev in enumerate(evaluators):
-            print(f"Evaluator {i+1}/{n}: {ev.name}", flush=True)
+            logger.info(f"Evaluator {i+1}/{n}: {ev.name}")
             result = ev.run(data.__deepcopy__(), n_cpus=n_cpus)
             results.append(cls(evaluator=ev, success_rate=result))
-            print(f"Evaluator {i+1}/{n} done.", flush=True)
+            logger.info(f"Evaluator {i+1}/{n} done.")
         return results
 
     @classmethod
