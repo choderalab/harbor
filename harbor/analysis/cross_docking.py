@@ -1220,6 +1220,14 @@ class RMSDScorer(Scorer):
     number_to_return: int = 1
 
 
+class PLIFScorer(Scorer):
+    type_: str = "PLIFScorer"
+    name: str = "PLIF_Recall"
+    variable: str = "PLIFData_plif_tversky_recall"
+    ascending: bool = False
+    number_to_return: int = 1
+
+
 class SuccessRate(ModelBase):
     name: str = "SuccessRate"
     type_: str = "SuccessRate"
@@ -1363,6 +1371,8 @@ def get_class_from_name(name: str):
             return RMSDScorer
         case "POSITScorer":
             return POSITScorer
+        case "PLIFScorer":
+            return PLIFScorer
         case "PoseSelector":
             return PoseSelector
         case "FractionGood":
@@ -1854,13 +1864,20 @@ class RMSDScorerSettings(EvaluatorSettingsBase):
     rmsd_name: str = Field("RMSD", description="Name of the RMSD score")
 
 
+class PLIFScorerSettings(EvaluatorSettingsBase):
+    use: bool = False
+    plif_column_name: str = "PLIFData_plif_tversky_recall"
+    plif_name: str = Field("PLIF_Recall", description="Name of the PLIF recall score")
+
+
 class ScorerSettings(CompositSettingsBase):
     use: bool = True
     rmsd_scorer_settings: RMSDScorerSettings = RMSDScorerSettings()
     posit_scorer_settings: POSITScorerSettings = POSITScorerSettings()
+    plif_scorer_settings: PLIFScorerSettings = PLIFScorerSettings()
 
     def get_component_settings(self) -> list[EvaluatorSettingsBase]:
-        return [self.rmsd_scorer_settings, self.posit_scorer_settings]
+        return [self.rmsd_scorer_settings, self.posit_scorer_settings, self.plif_scorer_settings]
 
 
 class SuccessRateSettings(EvaluatorSettingsBase):
@@ -2180,6 +2197,15 @@ class EvaluatorFactory(SettingsBase):
                 POSITScorer(
                     name=posit_settings.posit_name,
                     variable=posit_settings.posit_score_column_name,
+                )
+            )
+
+        if settings.plif_scorer_settings.use:
+            plif_settings = settings.plif_scorer_settings
+            scorers.append(
+                PLIFScorer(
+                    name=plif_settings.plif_name,
+                    variable=plif_settings.plif_column_name,
                 )
             )
 
