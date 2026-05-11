@@ -1,4 +1,5 @@
 import itertools
+import time
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from typing_extensions import Self
 import abc
@@ -1385,6 +1386,22 @@ def _bootstrap_worker(args):
         return bootstrap_idx, None
 
 
+def _bootstrap_chunk_worker(args):
+    """Process a chunk of bootstraps in one worker call to amortize pickle overhead."""
+    indices, evaluator_json, pose_selected_data = args
+    evaluator_data = json.loads(evaluator_json)
+    evaluator_copy = get_class_from_name(evaluator_data["type_"])(**evaluator_data)
+    results = []
+    for idx in indices:
+        try:
+            result = evaluator_copy.process_single_bootstrap(pose_selected_data)
+            results.append((idx, result))
+        except Exception as e:
+            print(f"Error processing bootstrap {idx}: {e}")
+            results.append((idx, None))
+    return results
+
+
 class Evaluator(ModelBase):
     name: str = "Evaluator"
     type_: str = "Evaluator"
@@ -1489,9 +1506,13 @@ class Evaluator(ModelBase):
 
         if n_cpus == 1:
             # Sequential processing
+            t_bootstrap_total = 0.0
             for bootstrap_idx in range(self.n_bootstraps):
                 try:
+                    t0 = time.perf_counter()
                     result = self.process_single_bootstrap(pose_selected_data)
+                    elapsed = time.perf_counter() - t0
+                    t_bootstrap_total += elapsed
                     if result is not None:
                         all_results.append(result)
                 except Exception as e:
@@ -1507,22 +1528,22 @@ class Evaluator(ModelBase):
                 f"Running {self.n_bootstraps} bootstraps in parallel using {n_cpus} CPUs."
             )
 
-            # Create worker arguments
-            worker_args = [
-                (bootstrap_idx, self.to_json_str(), pose_selected_data)
-                for bootstrap_idx in range(self.n_bootstraps)
+            # Chunk bootstraps so pose_selected_data is pickled once per worker, not once per bootstrap
+            indices = list(range(self.n_bootstraps))
+            chunk_size = max(1, len(indices) // n_cpus)
+            chunks = [
+                indices[i : i + chunk_size] for i in range(0, len(indices), chunk_size)
+            ]
+            evaluator_json = self.to_json_str()
+            chunk_args = [
+                (chunk, evaluator_json, pose_selected_data) for chunk in chunks
             ]
 
             with ProcessPoolExecutor(max_workers=n_cpus) as executor:
-                future_to_idx = {
-                    executor.submit(_bootstrap_worker, args): args[0]
-                    for args in worker_args
-                }
-
-                for future in as_completed(future_to_idx):
-                    bootstrap_idx, result = future.result()
-                    if result is not None:
-                        all_results.append(result)
+                for chunk_results in executor.map(_bootstrap_chunk_worker, chunk_args):
+                    for bootstrap_idx, result in chunk_results:
+                        if result is not None:
+                            all_results.append(result)
 
         return SuccessRate.from_replicates(all_results)
 
@@ -1606,10 +1627,9 @@ class Results(BaseModel):
     def calculate_results(
         cls, data: DockingDataModel, evaluators: list[Evaluator], n_cpus: int = 1
     ) -> list["Results"]:
-        data_copies = [data.__deepcopy__() for ev in evaluators]
         results = []
-        for data, ev in tqdm(zip(data_copies, evaluators), total=len(evaluators)):
-            result = ev.run(data, n_cpus=n_cpus)
+        for ev in tqdm(evaluators, total=len(evaluators)):
+            result = ev.run(data.__deepcopy__(), n_cpus=n_cpus)
             results.append(cls(evaluator=ev, success_rate=result))
         return results
 
@@ -1845,7 +1865,8 @@ class SuccessRateSettings(EvaluatorSettingsBase):
         2.0, description="RMSD cutoff to label the resulting poses as successful"
     )
     below_cutoff_is_good: bool = Field(
-        True, description="Whether values below (True) or above (False) the cutoff are successes"
+        True,
+        description="Whether values below (True) or above (False) the cutoff are successes",
     )
 
 
