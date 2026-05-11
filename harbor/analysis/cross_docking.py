@@ -1628,9 +1628,12 @@ class Results(BaseModel):
         cls, data: DockingDataModel, evaluators: list[Evaluator], n_cpus: int = 1
     ) -> list["Results"]:
         results = []
-        for ev in tqdm(evaluators, total=len(evaluators)):
+        n = len(evaluators)
+        for i, ev in enumerate(evaluators):
+            print(f"Evaluator {i+1}/{n}: {ev.name}", flush=True)
             result = ev.run(data.__deepcopy__(), n_cpus=n_cpus)
             results.append(cls(evaluator=ev, success_rate=result))
+            print(f"Evaluator {i+1}/{n} done.", flush=True)
         return results
 
     @classmethod
